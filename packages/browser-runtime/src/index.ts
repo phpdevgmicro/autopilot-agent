@@ -7,8 +7,8 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { type BrowserMode, type BrowserViewport, type StartTarget } from "@cua-sample/replay-schema";
 
 export const defaultViewport: BrowserViewport = {
-  height: 900,
-  width: 1440,
+  height: Number(process.env.CUA_VIEWPORT_HEIGHT ?? "900"),
+  width: Number(process.env.CUA_VIEWPORT_WIDTH ?? "1440"),
 };
 
 export type BrowserStartTarget = {

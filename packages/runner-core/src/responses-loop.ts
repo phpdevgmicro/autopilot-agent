@@ -95,8 +95,9 @@ type ResponsesLoopResult = {
   notes: string[];
 };
 
-const defaultInterActionDelayMs = 120;
-const toolExecutionTimeoutMs = 20_000;
+const defaultInterActionDelayMs = Number(process.env.CUA_INTER_ACTION_DELAY_MS ?? "120");
+const toolExecutionTimeoutMs = Number(process.env.CUA_TOOL_TIMEOUT_MS ?? "20000");
+const defaultReasoningEffort = (process.env.CUA_REASONING_EFFORT ?? "medium") as "low" | "medium" | "high";
 
 class OpenAIResponsesClient implements ResponsesClient {
   private readonly client: OpenAI;
@@ -730,9 +731,8 @@ export async function runResponsesCodeLoop(
         model: input.context.detail.run.model,
         parallel_tool_calls: false,
         previous_response_id: previousResponseId,
-        reasoning: { effort: "low" },
+        reasoning: { effort: defaultReasoningEffort },
         tools: buildCodeToolDefinitions(),
-        truncation: "auto",
       },
       input.context.signal,
     );
@@ -825,7 +825,6 @@ export async function runResponsesNativeComputerLoop(
         previous_response_id: previousResponseId,
         reasoning: { effort: "low" },
         tools: buildComputerToolDefinitions(),
-        truncation: "auto",
       },
       input.context.signal,
     );

@@ -1,5 +1,7 @@
 "use client";
 
+import { appName, appSubtitle } from "./helpers";
+
 type RunSummaryProps = {
   runnerOnline: boolean;
   topbarSubtitle: string;
@@ -12,7 +14,6 @@ type StageSummaryProps = {
 
 export function ConsoleTopbar({
   runnerOnline,
-  topbarSubtitle,
 }: RunSummaryProps) {
   return (
     <header className="consoleTopbar">
@@ -21,14 +22,14 @@ export function ConsoleTopbar({
           <span>🤖</span>
         </div>
         <div className="brandCopy">
-          <h1>Browser Agent</h1>
-          <p>{topbarSubtitle}</p>
+          <h1>{appName}</h1>
+          <p>{appSubtitle}</p>
         </div>
       </div>
       <div className="statusCluster">
         <div className={`statusPill ${runnerOnline ? "ok" : "error"}`}>
           <span className="statusDot" />
-          {runnerOnline ? "Runner Online" : "Runner Offline"}
+          {runnerOnline ? "Engine Online" : "Engine Offline"}
         </div>
       </div>
     </header>

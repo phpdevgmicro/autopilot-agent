@@ -28,7 +28,7 @@ export function RunActionButtons({
         onClick={() => void onStartRun()}
         type="button"
       >
-        {pendingAction === "start" ? "Starting..." : "Start Run"}
+        {pendingAction === "start" ? "Launching..." : "Launch Agent"}
       </button>
       <button
         className="secondaryButton"
@@ -36,7 +36,7 @@ export function RunActionButtons({
         onClick={() => void onStopRun()}
         type="button"
       >
-        {pendingAction === "stop" ? "Stopping..." : "Stop"}
+        {pendingAction === "stop" ? "Stopping..." : "Abort"}
       </button>
       <button
         className="secondaryButton"
@@ -60,19 +60,19 @@ export function RunControls({
   ...actionButtons
 }: RunControlsProps) {
   return (
-    <aside className="panel controlsPanel">
+    <aside className="controlsPanel">
       <div className="controlsHeader">
-        <h2>Agent Controls</h2>
+        <h2>Mission Control</h2>
       </div>
 
       <div className="controlsGrid">
         <div className="railField urlField">
-          <label htmlFor="start-url">Target URL <span style={{fontWeight: 400, opacity: 0.6}}>(optional)</span></label>
+          <label htmlFor="start-url">Target URL <span style={{fontWeight: 400, opacity: 0.5}}>(optional)</span></label>
           <input
             disabled={controlsLocked}
             id="start-url"
             onChange={(event) => onStartUrlChange(event.target.value)}
-            placeholder="https://example.com — leave empty to let agent navigate on its own"
+            placeholder="https://example.com"
             type="url"
             value={startUrl}
           />
@@ -84,7 +84,7 @@ export function RunControls({
             disabled={controlsLocked}
             id="run-prompt"
             onChange={(event) => onPromptChange(event.target.value)}
-            placeholder="Tell the agent what to do on the target website..."
+            placeholder="Describe what the agent should accomplish..."
             rows={6}
             value={prompt}
           />

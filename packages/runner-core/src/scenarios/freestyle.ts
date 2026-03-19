@@ -21,6 +21,13 @@ import {
 const liveOnlyMessage =
   "Freestyle agent requires the live Responses API. Set OPENAI_API_KEY in the runner environment.";
 
+function normalizeUrl(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
 class FreestyleCodeExecutor implements RunExecutor {
   async execute(context: RunExecutionContext) {
     const client = createDefaultResponsesClient();
@@ -35,7 +42,7 @@ class FreestyleCodeExecutor implements RunExecutor {
       throw createLiveResponsesUnavailableError(liveOnlyMessage);
     }
 
-    const startUrl = (context.detail.run.startUrl && context.detail.run.startUrl.trim()) || "https://www.google.com";
+    const startUrl = normalizeUrl(context.detail.run.startUrl ?? "") || "https://www.google.com";
 
     await context.emitEvent({
       detail: `model=${context.detail.run.model} url=${startUrl}`,
@@ -114,7 +121,7 @@ class FreestyleNativeExecutor implements RunExecutor {
       throw createLiveResponsesUnavailableError(liveOnlyMessage);
     }
 
-    const startUrl = (context.detail.run.startUrl && context.detail.run.startUrl.trim()) || "https://www.google.com";
+    const startUrl = normalizeUrl(context.detail.run.startUrl ?? "") || "https://www.google.com";
 
     await context.emitEvent({
       detail: `model=${context.detail.run.model} url=${startUrl}`,
