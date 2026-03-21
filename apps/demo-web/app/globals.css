@@ -88,8 +88,8 @@ code, .stageUrl {
   width: 44px;
   height: 44px;
   border-radius: var(--radius);
-  background: linear-gradient(135deg, var(--accent) 0%, #6366f1 100%);
-  font-size: 1.4rem;
+  background: transparent;
+  overflow: hidden;
 }
 
 .brandCopy h1 {

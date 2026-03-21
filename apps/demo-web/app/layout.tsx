@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 import "./globals.css";
 
-const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "AutoPilot Agent";
+const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Agent John Wicks";
 
 export const metadata: Metadata = {
   title: appName,

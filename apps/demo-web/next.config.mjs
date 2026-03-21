@@ -5,6 +5,7 @@ config({ path: fileURLToPath(new URL("../../.env", import.meta.url)) });
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  devIndicators: false,
   eslint: {
     ignoreDuringBuilds: true,
   },

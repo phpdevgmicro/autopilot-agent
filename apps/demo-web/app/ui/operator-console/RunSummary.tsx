@@ -19,7 +19,11 @@ export function ConsoleTopbar({
     <header className="consoleTopbar">
       <div className="brandBlock">
         <div className="brandMark">
-          <span>🤖</span>
+          <img
+            src="https://ibridgedigital.com/assets/img/iblogo.png"
+            alt="Agent John Wicks"
+            style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 'inherit' }}
+          />
         </div>
         <div className="brandCopy">
           <h1>{appName}</h1>

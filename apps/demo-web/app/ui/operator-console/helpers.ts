@@ -21,7 +21,7 @@ export const defaultMaxResponseTurns = Number(
   process.env.NEXT_PUBLIC_CUA_DEFAULT_MAX_RESPONSE_TURNS ?? "24",
 ) as ResponseTurnBudget;
 export const appName =
-  process.env.NEXT_PUBLIC_APP_NAME ?? "AutoPilot Agent";
+  process.env.NEXT_PUBLIC_APP_NAME ?? "Agent John Wicks";
 export const appSubtitle =
   process.env.NEXT_PUBLIC_APP_SUBTITLE ?? "Give a URL and instructions — the agent handles the rest.";
 export const engineHelpText =
