@@ -27,7 +27,6 @@ export function ConsoleTopbar({
         </div>
         <div className="brandCopy">
           <h1>{appName}</h1>
-          <p>{appSubtitle}</p>
         </div>
       </div>
       <div className="statusCluster">

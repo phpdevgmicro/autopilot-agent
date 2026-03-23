@@ -227,7 +227,7 @@ code, .stageUrl {
 
 .railField textarea {
   resize: vertical;
-  min-height: 100px;
+  min-height: 300px;
   line-height: 1.55;
 }
 

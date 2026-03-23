@@ -147,18 +147,7 @@ export function OperatorConsole({
               stopDisabled={stopDisabled}
             />
 
-            <ActivityFeed
-              activityFeedLabel={activityFeedLabel}
-              activityFeedRef={activityFeedRef}
-              activityItems={activityItems}
-              followActivityFeed={followActivityFeed}
-              onActivityFeedScroll={handleActivityFeedScroll}
-              onJumpToLatestActivity={handleJumpToLatestActivity}
-              onSelectScreenshot={handleSelectScreenshot}
-              onStreamLogsChange={setStreamLogs}
-              screenshots={screenshots}
-              streamLogs={streamLogs}
-            />
+
           </section>
 
           <section className="stageColumn">
