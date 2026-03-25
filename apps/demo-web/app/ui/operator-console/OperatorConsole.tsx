@@ -1,18 +1,24 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { formatClock, formatRunnerIssueMessage, scenarioTargetDisplay } from "./helpers";
 import { ActivityFeed } from "./ActivityFeed";
 import { RunControls, RunActionButtons } from "./RunControls";
 import { ConsoleTopbar, RunSummary } from "./RunSummary";
 import { ScreenshotPane } from "./ScreenshotPane";
+import { WalkthroughSummary } from "./WalkthroughSummary";
 import type { OperatorConsoleProps } from "./types";
 import { useRunStream } from "./useRunStream";
+
+type StageTab = "browser" | "activity" | "walkthrough";
 
 export function OperatorConsole({
   initialRunnerIssue,
   runnerBaseUrl,
   scenarios,
 }: OperatorConsoleProps) {
+  const [activeTab, setActiveTab] = useState<StageTab>("browser");
+
   const {
     activityFeedLabel,
     activityFeedRef,
@@ -32,6 +38,7 @@ export function OperatorConsole({
     matchingWorkspaceState,
     pendingAction,
     prompt,
+    runEvents,
     runnerOnline,
     screenshots,
     selectedBrowser,
@@ -121,6 +128,26 @@ export function OperatorConsole({
         ? "Captured frames will appear here once the agent starts."
         : issueMessage ?? "Runner is unavailable.";
 
+  const isRunFinished = selectedRun && (
+    selectedRun.run.status === "completed" ||
+    selectedRun.run.status === "failed" ||
+    selectedRun.run.status === "cancelled"
+  );
+
+  // Auto-switch to walkthrough tab when run finishes
+  useEffect(() => {
+    if (isRunFinished) {
+      setActiveTab("walkthrough");
+    }
+  }, [isRunFinished]);
+
+  // Reset to browser tab when run is cleared (Reset button)
+  useEffect(() => {
+    if (!selectedRun) {
+      setActiveTab("browser");
+    }
+  }, [selectedRun]);
+
   return (
     <main className="consoleShell">
       <section className="consoleFrame">
@@ -141,13 +168,12 @@ export function OperatorConsole({
               pendingAction={pendingAction}
               prompt={prompt}
               resetDisabled={resetDisabled}
+              runnerBaseUrl={runnerBaseUrl}
               showActionButtons={false}
               startDisabled={startDisabled}
               startUrl={startUrl}
               stopDisabled={stopDisabled}
             />
-
-
           </section>
 
           <section className="stageColumn">
@@ -156,35 +182,103 @@ export function OperatorConsole({
                 stageHeadline={stageHeadline}
                 stageSupportCopy={stageSupportCopy}
               />
-              <RunActionButtons
-                onResetWorkspace={handleResetWorkspace}
-                onStartRun={handleStartRun}
-                onStopRun={handleStopRun}
-                pendingAction={pendingAction}
-                resetDisabled={resetDisabled}
-                startDisabled={startDisabled}
-                stopDisabled={stopDisabled}
-              />
+              <div className="stageToolbarRight">
+                <div className="stageTabs">
+                  {/* Tab 1: Browser — live screenshot */}
+                  <button
+                    className={`stageTab ${activeTab === "browser" ? "active" : ""}`}
+                    onClick={() => setActiveTab("browser")}
+                    type="button"
+                  >
+                    🖥️ Browser
+                    {screenshots.length > 0 ? (
+                      <span className="stageTabBadge">{screenshots.length}</span>
+                    ) : null}
+                  </button>
+
+                  {/* Tab 2: Activity — event stream */}
+                  <button
+                    className={`stageTab ${activeTab === "activity" ? "active" : ""}`}
+                    onClick={() => setActiveTab("activity")}
+                    type="button"
+                  >
+                    ⚡ Activity
+                    {activityItems.length > 0 ? (
+                      <span className="stageTabBadge">{activityItems.length}</span>
+                    ) : null}
+                  </button>
+
+                  {/* Tab 3: Walkthrough — post-run report */}
+                  <button
+                    className={`stageTab ${activeTab === "walkthrough" ? "active" : ""} ${isRunFinished ? "stageTabReady" : ""}`}
+                    disabled={!isRunFinished}
+                    onClick={() => setActiveTab("walkthrough")}
+                    type="button"
+                  >
+                    📋 Walkthrough
+                    {isRunFinished ? (
+                      <span className="stageTabBadge stageTabBadgeGreen">✓</span>
+                    ) : null}
+                  </button>
+                </div>
+                <RunActionButtons
+                  onResetWorkspace={handleResetWorkspace}
+                  onStartRun={handleStartRun}
+                  onStopRun={handleStopRun}
+                  pendingAction={pendingAction}
+                  resetDisabled={resetDisabled}
+                  startDisabled={startDisabled}
+                  stopDisabled={stopDisabled}
+                />
+              </div>
             </div>
 
-            <ScreenshotPane
-              emptyReviewMessage={emptyReviewMessage}
-              emptyTimelineMessage={emptyTimelineMessage}
-              onJumpToLatestScreenshot={handleJumpToLatestScreenshot}
-              onOpenReplay={handleOpenReplay}
-              onScrubberChange={handleScrubberChange}
-              onSelectScreenshot={handleSelectScreenshot}
-              replayDisabled={replayDisabled}
-              runnerBaseUrl={runnerBaseUrl}
-              screenshots={screenshots}
-              selectedBrowser={selectedBrowser}
-              selectedRun={selectedRun}
-              selectedScenarioTitle={selectedScenarioTitle}
-              selectedScreenshot={selectedScreenshot}
-              selectedScreenshotIndex={selectedScreenshotIndex}
-              stageUrl={stageUrl}
-              viewingLiveFrame={viewingLiveFrame}
-            />
+            {/* ── Tab Content ────────────────────────── */}
+            {activeTab === "browser" ? (
+              <ScreenshotPane
+                emptyReviewMessage={emptyReviewMessage}
+                emptyTimelineMessage={emptyTimelineMessage}
+                onJumpToLatestScreenshot={handleJumpToLatestScreenshot}
+                onOpenReplay={handleOpenReplay}
+                onScrubberChange={handleScrubberChange}
+                onSelectScreenshot={handleSelectScreenshot}
+                replayDisabled={replayDisabled}
+                runnerBaseUrl={runnerBaseUrl}
+                screenshots={screenshots}
+                selectedBrowser={selectedBrowser}
+                selectedRun={selectedRun}
+                selectedScenarioTitle={selectedScenarioTitle}
+                selectedScreenshot={selectedScreenshot}
+                selectedScreenshotIndex={selectedScreenshotIndex}
+                stageUrl={stageUrl}
+                viewingLiveFrame={viewingLiveFrame}
+              />
+            ) : activeTab === "activity" ? (
+              <div className="stageActivityPanel">
+                <ActivityFeed
+                  activityFeedLabel={activityFeedLabel}
+                  activityFeedRef={activityFeedRef}
+                  activityItems={activityItems}
+                  followActivityFeed={followActivityFeed}
+                  onActivityFeedScroll={handleActivityFeedScroll}
+                  onJumpToLatestActivity={handleJumpToLatestActivity}
+                  onSelectScreenshot={(screenshotId) => {
+                    handleSelectScreenshot(screenshotId);
+                    setActiveTab("browser");
+                  }}
+                  onStreamLogsChange={setStreamLogs}
+                  screenshots={screenshots}
+                  streamLogs={streamLogs}
+                />
+              </div>
+            ) : activeTab === "walkthrough" && isRunFinished ? (
+              <WalkthroughSummary
+                runEvents={runEvents}
+                runnerBaseUrl={runnerBaseUrl}
+                screenshots={screenshots}
+                selectedRun={selectedRun}
+              />
+            ) : null}
           </section>
         </section>
       </section>

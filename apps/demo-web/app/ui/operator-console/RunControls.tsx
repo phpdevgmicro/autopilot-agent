@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect, useCallback } from "react";
 import type { ActionButtonsProps } from "./types";
 
 type RunControlsProps = ActionButtonsProps & {
@@ -7,9 +8,66 @@ type RunControlsProps = ActionButtonsProps & {
   onPromptChange: (value: string) => void;
   onStartUrlChange: (value: string) => void;
   prompt: string;
+  runnerBaseUrl?: string;
   showActionButtons?: boolean;
   startUrl: string;
 };
+
+function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string }) {
+  const [status, setStatus] = useState<"loading" | "connected" | "not-connected" | "disabled">("loading");
+  const [launching, setLaunching] = useState(false);
+
+  const checkStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${runnerBaseUrl}/api/browser/profile-status`);
+      const data = await res.json();
+      if (!data.persist) {
+        setStatus("disabled");
+      } else {
+        setStatus(data.profileExists ? "connected" : "not-connected");
+      }
+    } catch {
+      setStatus("not-connected");
+    }
+  }, [runnerBaseUrl]);
+
+  useEffect(() => {
+    void checkStatus();
+  }, [checkStatus]);
+
+  const handleConnect = async () => {
+    setLaunching(true);
+    try {
+      await fetch(`${runnerBaseUrl}/api/browser/connect-profile`, { method: "POST" });
+    } catch { /* ignore */ }
+    // Give a moment for profile to be created, then re-check
+    setTimeout(() => {
+      setLaunching(false);
+      void checkStatus();
+    }, 3000);
+  };
+
+  if (status === "loading" || status === "disabled") return null;
+
+  return (
+    <div className="profileConnect">
+      <div className="profileStatus">
+        <span className={`profileDot ${status === "connected" ? "profileDotGreen" : "profileDotRed"}`} />
+        <span className="profileLabel">
+          {status === "connected" ? "Profile connected" : "No profile"}
+        </span>
+      </div>
+      <button
+        className="profileButton"
+        disabled={launching}
+        onClick={() => void handleConnect()}
+        type="button"
+      >
+        {launching ? "Opening browser..." : status === "connected" ? "🔄 Re-login" : "🔗 Connect Google"}
+      </button>
+    </div>
+  );
+}
 
 export function RunActionButtons({
   onResetWorkspace,
@@ -55,6 +113,7 @@ export function RunControls({
   onPromptChange,
   onStartUrlChange,
   prompt,
+  runnerBaseUrl = "http://127.0.0.1:4001",
   showActionButtons = true,
   startUrl,
   ...actionButtons
@@ -91,7 +150,12 @@ export function RunControls({
         </div>
       </div>
 
+      {!controlsLocked ? (
+        <ConnectProfileButton runnerBaseUrl={runnerBaseUrl} />
+      ) : null}
+
       {showActionButtons ? <RunActionButtons {...actionButtons} /> : null}
     </aside>
   );
 }
+

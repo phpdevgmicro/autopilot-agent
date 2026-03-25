@@ -823,7 +823,7 @@ export async function runResponsesNativeComputerLoop(
         model: input.context.detail.run.model,
         parallel_tool_calls: false,
         previous_response_id: previousResponseId,
-        reasoning: { effort: "low" },
+        reasoning: { effort: defaultReasoningEffort },
         tools: buildComputerToolDefinitions(),
       },
       input.context.signal,

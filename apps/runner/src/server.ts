@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { basename, resolve } from "node:path";
+import { basename, resolve, join } from "node:path";
+import { homedir } from "node:os";
 
 import Fastify, { type FastifyReply } from "fastify";
 
@@ -182,6 +183,63 @@ export function createServer(options: CreateServerOptions = {}) {
     });
 
     return reply.hijack();
+  });
+
+  // ── Browser Profile Management ──────────────────────────
+  const profileDir = process.env.CUA_BROWSER_PROFILE_DIR
+    ?? join(homedir(), ".autopilot-agent", "browser-profile");
+
+  app.get("/api/browser/profile-status", async () => {
+    let exists = false;
+    try {
+      const s = await stat(profileDir);
+      exists = s.isDirectory();
+    } catch { /* doesn't exist */ }
+
+    return {
+      persist: process.env.CUA_BROWSER_PERSIST !== "false",
+      profileDir,
+      profileExists: exists,
+    };
+  });
+
+  app.post("/api/browser/connect-profile", async (_request, reply) => {
+    if (process.env.CUA_BROWSER_PERSIST === "false") {
+      reply.code(400);
+      return {
+        error: "Browser persistence is disabled",
+        hint: "Set CUA_BROWSER_PERSIST=true in .env to enable persistent profiles.",
+      };
+    }
+
+    // Launch browser directly — no terminal window
+    const { chromium } = await import("playwright");
+    const { mkdir } = await import("node:fs/promises");
+
+    await mkdir(profileDir, { recursive: true });
+
+    // Fire-and-forget: open headed browser for login
+    chromium.launchPersistentContext(profileDir, {
+      headless: false,
+      args: [
+        "--window-size=1280,900",
+        "--disable-blink-features=AutomationControlled",
+      ],
+      ignoreDefaultArgs: ["--enable-automation"],
+      viewport: { width: 1280, height: 900 },
+    }).then(async (context) => {
+      const page = context.pages()[0] ?? await context.newPage();
+      await page.goto("https://accounts.google.com");
+      // Browser stays open until user closes it
+    }).catch(() => {
+      // Ignore launch errors
+    });
+
+    return {
+      status: "launched",
+      message: "Browser window opened — log into Google, then close the browser.",
+      profileDir,
+    };
   });
 
   return app;

@@ -27,7 +27,9 @@
 }
 
 /* ── Reset ────────────────────────────────────────────── */
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 html {
   background: var(--bg);
@@ -43,12 +45,16 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-button, input, select, textarea {
+button,
+input,
+select,
+textarea {
   font: inherit;
   color: inherit;
 }
 
-code, .stageUrl {
+code,
+.stageUrl {
   font-family: var(--mono);
 }
 
@@ -124,8 +130,16 @@ code, .stageUrl {
   font-weight: 600;
 }
 
-.statusPill.ok { color: var(--ok); border-color: rgba(34, 197, 94, 0.25); }
-.statusPill.error { color: var(--error); border-color: rgba(239, 68, 68, 0.25); }
+.statusPill.ok {
+  color: var(--ok);
+  border-color: rgba(34, 197, 94, 0.25);
+}
+
+.statusPill.error {
+  color: var(--error);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
 .statusDot {
   width: 7px;
   height: 7px;
@@ -138,14 +152,21 @@ code, .stageUrl {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
 }
 
 /* ── Two-Column Layout ────────────────────────────────── */
 .benchTop {
   display: grid;
-  grid-template-columns: 380px minmax(0, 1fr);
+  grid-template-columns: 440px minmax(0, 1fr);
   gap: 14px;
   align-items: stretch;
   margin-top: 14px;
@@ -342,6 +363,16 @@ code, .stageUrl {
   font-size: 0.82rem;
 }
 
+/* ── Stage: Frames Scroll Container ──────────────────── */
+.stageFramesScroll {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
 /* ── Stage: Browser Surface ───────────────────────────── */
 .browserSurface {
   display: grid;
@@ -514,15 +545,22 @@ code, .stageUrl {
   transition: background 120ms ease;
 }
 
-.activityRow:first-child { border-top: none; }
-.activityRow:hover { background: rgba(255, 255, 255, 0.02); }
+.activityRow:first-child {
+  border-top: none;
+}
+
+.activityRow:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
 
 .activityRow summary {
   cursor: pointer;
   list-style: none;
 }
 
-.activityRow summary::-webkit-details-marker { display: none; }
+.activityRow summary::-webkit-details-marker {
+  display: none;
+}
 
 .activitySummary {
   display: flex;
@@ -553,13 +591,40 @@ code, .stageUrl {
 }
 
 /* Family color coding */
-.activityFamily.system { background: var(--pending-bg); color: var(--pending); }
-.activityFamily.action { background: rgba(139, 92, 246, 0.12); color: #a78bfa; }
-.activityFamily.observe { background: var(--warn-bg); color: var(--warn); }
-.activityFamily.snapshot { background: rgba(6, 182, 212, 0.12); color: #22d3ee; }
-.activityFamily.tool { background: rgba(168, 85, 247, 0.12); color: #c084fc; }
-.activityFamily.verify { background: var(--ok-bg); color: var(--ok); }
-.activityFamily.operator { background: rgba(255, 255, 255, 0.08); color: var(--text-secondary); }
+.activityFamily.system {
+  background: var(--pending-bg);
+  color: var(--pending);
+}
+
+.activityFamily.action {
+  background: rgba(139, 92, 246, 0.12);
+  color: #a78bfa;
+}
+
+.activityFamily.observe {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+
+.activityFamily.snapshot {
+  background: rgba(6, 182, 212, 0.12);
+  color: #22d3ee;
+}
+
+.activityFamily.tool {
+  background: rgba(168, 85, 247, 0.12);
+  color: #c084fc;
+}
+
+.activityFamily.verify {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+.activityFamily.operator {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+}
 
 .activityHeadline {
   font-size: 0.82rem;
@@ -602,8 +667,13 @@ code, .stageUrl {
 }
 
 /* Row-level coloring by level */
-.activityRow.level-error { border-left: 2px solid var(--error); }
-.activityRow.level-warn { border-left: 2px solid var(--warn); }
+.activityRow.level-error {
+  border-left: 2px solid var(--error);
+}
+
+.activityRow.level-warn {
+  border-left: 2px solid var(--warn);
+}
 
 /* ── Activity Detail (expanded) ───────────────────────── */
 .activityDetail {
@@ -630,6 +700,531 @@ code, .stageUrl {
   color: var(--accent);
 }
 
+/* ── Stage Tabs ───────────────────────────────────────── */
+.stageTabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.stageTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.stageTab:hover {
+  color: var(--text-secondary);
+}
+
+.stageTab.active {
+  background: var(--surface-raised);
+  color: var(--text);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.stageTabBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.stageTab:not(.active) .stageTabBadge {
+  background: var(--border-strong);
+  color: var(--text-secondary);
+}
+
+.stageTab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stageTab:disabled:hover {
+  color: var(--text-muted);
+}
+
+.stageTabReady:not(:disabled) {
+  animation: walkthroughPulse 2s ease-in-out;
+}
+
+.stageTabBadgeGreen {
+  background: #22c55e !important;
+  color: #fff !important;
+}
+
+@keyframes walkthroughPulse {
+  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+  50% { box-shadow: 0 0 12px 2px rgba(34, 197, 94, 0.3); }
+  100% { box-shadow: none; }
+}
+
+/* ── Stage Toolbar Right ─────────────────────────────── */
+.stageToolbarRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.activityToggleBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.activityToggleBtn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.activityToggleIcon {
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.activityToggleBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+/* ── Stage Activity Panel (Tab View) ─────────────────── */
+.stageActivityPanel {
+  min-height: 0;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.stageActivityPanel .railActivity {
+  border: none;
+  border-radius: 0;
+  height: 100%;
+}
+
+/* ── Walkthrough Summary Card ────────────────────────── */
+.walkthroughCard {
+  margin-top: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  animation: walkthroughSlideIn 400ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@keyframes walkthroughSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.walkthroughHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.walkthroughBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.walkthroughBadgeSuccess {
+  background: var(--ok-bg);
+  color: var(--ok);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.walkthroughBadgeError {
+  background: var(--error-bg);
+  color: var(--error);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.walkthroughBadgeWarn {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.walkthroughMeta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.walkthroughDuration {
+  font-weight: 600;
+}
+
+.walkthroughStats {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.walkthroughSection {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.walkthroughSection:last-of-type {
+  border-bottom: none;
+}
+
+.walkthroughSection h3 {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.walkthroughConclusion {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* ── Connect Profile Button ────────────────────────────── */
+.profileConnect {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  margin: 0 12px 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.profileStatus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.profileDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.profileDotGreen {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+}
+
+.profileDotRed {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.3);
+}
+
+.profileLabel {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.profileButton {
+  padding: 4px 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.profileButton:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.profileButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Walkthrough Scroll Container ────────────────────── */
+.walkthroughScroll {
+  overflow-y: auto;
+  min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* ── Walkthrough Header ──────────────────────────────── */
+.walkthroughHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.walkthroughTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+/* ── Narrative Timeline ──────────────────────────────── */
+.walkthroughNarrative {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.walkthroughStep {
+  display: flex;
+  gap: 14px;
+}
+
+/* Connector (dot + line) */
+.walkthroughStepConnector {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 32px;
+  flex-shrink: 0;
+}
+
+.walkthroughStepDot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface-raised);
+  border: 2px solid var(--border-strong);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.walkthroughStepNum {
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-family: var(--mono);
+  color: var(--accent);
+}
+
+.walkthroughStepLine {
+  flex: 1;
+  width: 2px;
+  min-height: 20px;
+  background: var(--border-strong);
+}
+
+/* Step content */
+.walkthroughStepContent {
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 20px;
+}
+
+.walkthroughStepHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.walkthroughStepLabel {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.walkthroughStepTime {
+  font-size: 0.68rem;
+  font-family: var(--mono);
+  color: var(--text-muted);
+}
+
+.walkthroughStepPage {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  padding: 1px 8px;
+  background: var(--bg);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+/* Action descriptions */
+.walkthroughStepActions {
+  margin: 0 0 8px;
+  padding: 0 0 0 16px;
+  list-style: none;
+}
+
+.walkthroughStepActions li {
+  position: relative;
+  padding: 2px 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.walkthroughStepActions li::before {
+  content: "→";
+  position: absolute;
+  left: -14px;
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+
+.walkthroughStepNoAction {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+
+/* Screenshot thumbnail */
+.walkthroughStepThumb {
+  display: block;
+  position: relative;
+  padding: 0;
+  border: 2px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+  max-width: 340px;
+}
+
+.walkthroughStepThumb:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.15);
+}
+
+.walkthroughStepThumbActive {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+}
+
+.walkthroughStepImg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 180px;
+  object-fit: cover;
+}
+
+.walkthroughStepThumbHint {
+  display: block;
+  padding: 4px 0;
+  text-align: center;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  background: var(--surface-raised);
+}
+
+/* Expanded screenshot */
+.walkthroughStepExpanded {
+  margin-top: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.walkthroughStepExpandedImg {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--bg);
+}
+
+/* ── Error/Footer (kept) ─────────────────────────────── */
+.walkthroughError {
+  background: var(--error-bg);
+  border-radius: 0;
+}
+
+.walkthroughNote {
+  margin: 4px 0;
+  color: var(--error);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.walkthroughFooter {
+  padding: 10px 20px;
+  border-top: 1px solid var(--border);
+}
+
+.walkthroughTime {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-family: var(--mono);
+}
+
 /* ── Responsive ───────────────────────────────────────── */
 @media (max-width: 960px) {
   .benchTop {
@@ -649,6 +1244,29 @@ code, .stageUrl {
     flex-direction: column;
     align-items: flex-start;
   }
+
+  .walkthroughHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .walkthroughConclusion {
+    font-size: 0.82rem;
+  }
+
+  .stageTabs {
+    gap: 1px;
+  }
+
+  .stageTab {
+    padding: 5px 10px;
+    font-size: 0.72rem;
+  }
+
+  .walkthroughStepThumb {
+    max-width: 280px;
+  }
 }
 
 @media (max-width: 640px) {
@@ -659,5 +1277,40 @@ code, .stageUrl {
   .stageControlBar {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .walkthroughCard {
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .walkthroughSection h3 {
+    font-size: 0.82rem;
+  }
+
+  .walkthroughTitle {
+    font-size: 0.88rem;
+  }
+
+  .walkthroughMeta {
+    flex-wrap: wrap;
+  }
+
+  .walkthroughStepThumb {
+    max-width: 220px;
+  }
+
+  .walkthroughStepImg {
+    max-height: 140px;
+  }
+
+  .walkthroughStepConnector {
+    width: 24px;
+  }
+
+  .walkthroughStepDot {
+    width: 22px;
+    height: 22px;
+    font-size: 0.72rem;
   }
 }

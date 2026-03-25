@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   runDetailSchema,
   runEventSchema,
+  scenariosResponseSchema,
   scenarioWorkspaceStateSchema,
   startRunResponseSchema,
   type BrowserMode,
@@ -75,8 +76,12 @@ function toRunnerIssue(
 export function useRunStream({
   initialRunnerIssue,
   runnerBaseUrl,
-  scenarios,
+  scenarios: initialScenarios,
 }: UseRunStreamOptions) {
+  const [liveScenarios, setLiveScenarios] = useState<ScenarioManifest[]>(initialScenarios);
+  const [liveRunnerIssue, setLiveRunnerIssue] = useState<RunnerIssue | null>(initialRunnerIssue);
+
+  const scenarios = liveScenarios;
   const initialScenario = scenarios[0] ?? null;
   const [selectedScenarioId, setSelectedScenarioId] = useState(
     initialScenario?.id ?? "",
@@ -106,10 +111,47 @@ export function useRunStream({
   const eventSourceRef = useRef<EventSource | null>(null);
   const activityFeedRef = useRef<HTMLDivElement | null>(null);
 
+  const runnerOnline = !liveRunnerIssue && scenarios.length > 0;
+
+  // Client-side health poll: retry fetching scenarios when the runner is offline
+  useEffect(() => {
+    if (runnerOnline) {
+      return;
+    }
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const response = await fetch(`${runnerBaseUrl}/api/scenarios`);
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data = scenariosResponseSchema.parse(await response.json());
+
+        if (data.length > 0) {
+          setLiveScenarios(data);
+          setLiveRunnerIssue(null);
+
+          // Initialize scenario selection with the first result
+          const first = data[0];
+          if (first) {
+            setSelectedScenarioId(first.id);
+            setMode(first.defaultMode);
+            setPrompt(first.defaultPrompt);
+          }
+        }
+      } catch {
+        // Runner still not available, will retry on next interval
+      }
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, [runnerOnline, runnerBaseUrl]);
+
   const selectedScenario =
     scenarios.find((scenario) => scenario.id === selectedScenarioId) ??
     initialScenario;
-  const runnerOnline = !initialRunnerIssue && scenarios.length > 0;
   const selectedRun =
     activeRun && selectedScenario && activeRun.run.scenarioId === selectedScenario.id
       ? activeRun
@@ -550,6 +592,8 @@ export function useRunStream({
       } else if (!selectedRun || selectedRun.run.status !== "running") {
         setActiveRun(null);
         setRunEvents([]);
+        setManualLogs([]);
+        setManualTranscript([]);
       }
     } catch (error) {
       const issue = toRunnerIssue(
@@ -663,6 +707,7 @@ export function useRunStream({
     matchingWorkspaceState,
     pendingAction,
     prompt,
+    runEvents,
     runnerOnline,
     screenshots,
     selectedBrowser,

@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
@@ -10,6 +11,13 @@ export const defaultViewport: BrowserViewport = {
   height: Number(process.env.CUA_VIEWPORT_HEIGHT ?? "900"),
   width: Number(process.env.CUA_VIEWPORT_WIDTH ?? "1440"),
 };
+
+/**
+ * Persistent profile directory for the agent browser.
+ * Login to Google once → stays logged in for all future runs.
+ * Override with CUA_BROWSER_PROFILE_DIR env var.
+ */
+const defaultProfileDir = join(homedir(), ".autopilot-agent", "browser-profile");
 
 export type BrowserStartTarget = {
   targetLabel: string;
@@ -30,7 +38,7 @@ export type BrowserScreenshot = BrowserSessionState & {
 };
 
 export type BrowserSession = {
-  browser: Browser;
+  browser: Browser | null;
   captureScreenshot: (label: string) => Promise<BrowserScreenshot>;
   close: () => Promise<void>;
   context: BrowserContext;
@@ -86,14 +94,39 @@ export async function launchBrowserSession(
     options.startTarget,
     options.workspacePath,
   );
-  const browser = await chromium.launch({
-    args: [`--window-size=${viewport.width},${viewport.height}`],
-    headless: options.browserMode === "headless",
-  });
-  const context = await browser.newContext({
-    viewport,
-  });
-  const page = await context.newPage();
+
+  const profileDir = process.env.CUA_BROWSER_PROFILE_DIR ?? defaultProfileDir;
+  const usePersistentProfile = process.env.CUA_BROWSER_PERSIST !== "false";
+
+  let browser: Browser | null = null;
+  let context: BrowserContext;
+  let page: Page;
+
+  if (usePersistentProfile) {
+    // Persistent context — keeps cookies, login, profile data across runs
+    await mkdir(profileDir, { recursive: true });
+    context = await chromium.launchPersistentContext(profileDir, {
+      args: [
+        `--window-size=${viewport.width},${viewport.height}`,
+        "--disable-blink-features=AutomationControlled",
+      ],
+      headless: options.browserMode === "headless",
+      viewport,
+      ignoreDefaultArgs: ["--enable-automation"],
+    });
+    page = context.pages()[0] ?? await context.newPage();
+  } else {
+    // Ephemeral context — clean Chromium each time (original behavior)
+    browser = await chromium.launch({
+      args: [`--window-size=${viewport.width},${viewport.height}`],
+      headless: options.browserMode === "headless",
+    });
+    context = await browser.newContext({
+      viewport,
+    });
+    page = await context.newPage();
+  }
+
   let screenshotCount = 0;
 
   await page.goto(resolvedTarget.url, {
@@ -133,7 +166,9 @@ export async function launchBrowserSession(
     },
     async close() {
       await context.close();
-      await browser.close();
+      if (browser) {
+        await browser.close();
+      }
     },
     context,
     mode: options.browserMode,
