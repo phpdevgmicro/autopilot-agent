@@ -107,6 +107,10 @@ export async function launchBrowserSession(
   const userAgent =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
+  // Browser channel: use CUA_BROWSER_CHANNEL="chrome" for native Chrome (better anti-bot, but cookies are NOT portable across OS).
+  // Leave unset to use Playwright's bundled Chromium (cross-platform portable cookies).
+  const browserChannel = process.env.CUA_BROWSER_CHANNEL || undefined;
+
   // Common Chromium flags for anti-bot stealth + GPU stability
   const stealthArgs = [
     `--window-size=${viewport.width},${viewport.height}`,
@@ -140,7 +144,7 @@ export async function launchBrowserSession(
       ignoreDefaultArgs: ["--enable-automation"],
       acceptDownloads: true,
       permissions: ["clipboard-read", "clipboard-write"],
-      channel: "chrome",
+      ...(browserChannel ? { channel: browserChannel } : {}),
     });
     page = context.pages()[0] ?? await context.newPage();
   } else {
@@ -148,7 +152,7 @@ export async function launchBrowserSession(
     browser = await chromium.launch({
       args: stealthArgs,
       headless: options.browserMode === "headless",
-      channel: "chrome",
+      ...(browserChannel ? { channel: browserChannel } : {}),
     });
     context = await browser.newContext({
       viewport,
