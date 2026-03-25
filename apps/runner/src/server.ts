@@ -216,30 +216,50 @@ export function createServer(options: CreateServerOptions = {}) {
     const { chromium } = await import("playwright");
     const { mkdir } = await import("node:fs/promises");
 
-    await mkdir(profileDir, { recursive: true });
+    try {
+      await mkdir(profileDir, { recursive: true });
+    } catch (err: unknown) {
+      reply.code(500);
+      return {
+        error: "Failed to create profile directory",
+        hint: `Permission denied. Ensure the runner can write to ${profileDir}. Error: ${String(err)}`,
+      };
+    }
 
-    // Fire-and-forget: open headed browser for login
-    chromium.launchPersistentContext(profileDir, {
-      headless: false,
-      args: [
-        "--window-size=1280,900",
-        "--disable-blink-features=AutomationControlled",
-      ],
-      ignoreDefaultArgs: ["--enable-automation"],
-      viewport: { width: 1280, height: 900 },
-    }).then(async (context) => {
-      const page = context.pages()[0] ?? await context.newPage();
-      await page.goto("https://accounts.google.com");
-      // Browser stays open until user closes it
-    }).catch(() => {
-      // Ignore launch errors
-    });
+    // On a remote headless VM, attempting to open a visible browser window (headless: false) 
+    // will immediately crash because there is no desktop GUI display (X11/Wayland).
+    // The safest way to authenticate a headless VM is to log in locally and upload the saved profile folder via SCP.
+    try {
+      // Fire-and-forget: open headed browser for login
+      chromium.launchPersistentContext(profileDir, {
+        headless: false,
+        args: [
+          "--window-size=1280,900",
+          "--disable-blink-features=AutomationControlled",
+        ],
+        ignoreDefaultArgs: ["--enable-automation"],
+        viewport: { width: 1280, height: 900 },
+        ...(process.env.CUA_BROWSER_CHANNEL ? { channel: process.env.CUA_BROWSER_CHANNEL } : {}),
+      }).then(async (context) => {
+        const page = context.pages()[0] ?? await context.newPage();
+        await page.goto("https://accounts.google.com");
+        // Browser stays open until user closes it
+      }).catch((err) => {
+        console.error("Failed to launch headful profile window. This is expected on remote headless VMs:", err.message);
+      });
 
-    return {
-      status: "launched",
-      message: "Browser window opened — log into Google, then close the browser.",
-      profileDir,
-    };
+      return {
+        status: "launched",
+        message: "Browser window requested. Note: If you generated this request on a remote headless VM, the process will fail because VMs have no display GUI. You must authenticate locally and upload your profile directory.",
+        profileDir,
+      };
+    } catch (err: unknown) {
+      reply.code(500);
+      return {
+        error: "Failed to trigger GUI launch",
+        hint: String(err),
+      };
+    }
   });
 
   return app;
