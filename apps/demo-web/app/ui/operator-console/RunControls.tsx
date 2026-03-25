@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { ActionButtonsProps } from "./types";
+import { IconPlay, IconStop, IconRefresh, IconLoader, IconTarget } from "./Icons";
 
 type RunControlsProps = ActionButtonsProps & {
   controlsLocked: boolean;
@@ -13,7 +14,7 @@ type RunControlsProps = ActionButtonsProps & {
   startUrl: string;
 };
 
-function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string }) {
+export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string }) {
   const [status, setStatus] = useState<"loading" | "connected" | "not-connected" | "disabled">("loading");
   const [launching, setLaunching] = useState(false);
 
@@ -40,7 +41,6 @@ function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string }) {
     try {
       await fetch(`${runnerBaseUrl}/api/browser/connect-profile`, { method: "POST" });
     } catch { /* ignore */ }
-    // Give a moment for profile to be created, then re-check
     setTimeout(() => {
       setLaunching(false);
       void checkStatus();
@@ -50,21 +50,18 @@ function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string }) {
   if (status === "loading" || status === "disabled") return null;
 
   return (
-    <div className="profileConnect">
-      <div className="profileStatus">
-        <span className={`profileDot ${status === "connected" ? "profileDotGreen" : "profileDotRed"}`} />
-        <span className="profileLabel">
-          {status === "connected" ? "Profile connected" : "No profile"}
-        </span>
-      </div>
-      <button
-        className="profileButton"
-        disabled={launching}
-        onClick={() => void handleConnect()}
-        type="button"
-      >
-        {launching ? "Opening browser..." : status === "connected" ? "🔄 Re-login" : "🔗 Connect Google"}
-      </button>
+    <div className="topbarStatusPill" style={{ background: 'rgba(255, 255, 255, 0.04)', padding: '6px 14px', borderRadius: '16px', gap: '8px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+      <span className={`profileDot ${status === "connected" ? "profileDotGreen" : "profileDotRed"}`} style={{ width: '8px', height: '8px', borderRadius: '50%', background: status === "connected" ? '#22c55e' : '#ef4444' }} />
+      <span>{status === "connected" ? "Google Profile Linked" : "No Profile Session"}</span>
+      {status !== "connected" ? (
+        <button
+          onClick={() => void handleConnect()}
+          disabled={launching}
+          style={{ background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 8px', fontSize: '0.7rem', cursor: 'pointer', marginLeft: '4px' }}
+        >
+          {launching ? "Connecting" : "Connect"}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -81,28 +78,31 @@ export function RunActionButtons({
   return (
     <div className="stageToolbarActions">
       <button
-        className="primaryButton"
+        className="actionBtnPrimary"
         disabled={startDisabled}
         onClick={() => void onStartRun()}
         type="button"
+        title="Deploy the agent"
       >
-        {pendingAction === "start" ? "Launching..." : "Launch Agent"}
+        {pendingAction === "start" ? <IconLoader size={16} /> : <IconPlay size={16} />}
       </button>
       <button
-        className="secondaryButton"
+        className="actionBtnDanger"
         disabled={stopDisabled}
         onClick={() => void onStopRun()}
         type="button"
+        title="Abort mission"
       >
-        {pendingAction === "stop" ? "Stopping..." : "Abort"}
+        {pendingAction === "stop" ? <IconLoader size={16} /> : <IconStop size={16} />}
       </button>
       <button
-        className="secondaryButton"
+        className="actionBtnNeutral"
         disabled={resetDisabled}
         onClick={() => void onResetWorkspace()}
         type="button"
+        title="Reset workspace"
       >
-        {pendingAction === "reset" ? "Resetting..." : "Reset"}
+        {pendingAction === "reset" ? <IconLoader size={16} /> : <IconRefresh size={16} />}
       </button>
     </div>
   );
@@ -126,36 +126,33 @@ export function RunControls({
 
       <div className="controlsGrid">
         <div className="railField urlField">
-          <label htmlFor="start-url">Target URL <span style={{fontWeight: 400, opacity: 0.5}}>(optional)</span></label>
+          <label htmlFor="start-url">URL</label>
           <input
             disabled={controlsLocked}
             id="start-url"
             onChange={(event) => onStartUrlChange(event.target.value)}
-            placeholder="https://example.com"
+            placeholder="https://target-website.com"
             type="url"
             value={startUrl}
           />
         </div>
 
         <div className="railField promptField">
-          <label htmlFor="run-prompt">Instructions</label>
+          <label htmlFor="run-prompt">Mission Objective</label>
           <textarea
             disabled={controlsLocked}
             id="run-prompt"
             onChange={(event) => onPromptChange(event.target.value)}
-            placeholder="Describe what the agent should accomplish..."
+            placeholder="Navigate to the target URL and describe what you see on the page."
             rows={6}
             value={prompt}
           />
         </div>
       </div>
 
-      {!controlsLocked ? (
-        <ConnectProfileButton runnerBaseUrl={runnerBaseUrl} />
-      ) : null}
+      {/* ConnectProfileButton intentionally removed to save vertical space */}
 
       {showActionButtons ? <RunActionButtons {...actionButtons} /> : null}
     </aside>
   );
 }
-

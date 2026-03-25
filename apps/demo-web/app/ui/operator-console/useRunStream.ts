@@ -93,7 +93,7 @@ export function useRunStream({
   const [verificationEnabled, setVerificationEnabled] = useState(false);
   const [maxResponseTurns, setMaxResponseTurns] =
     useState<ResponseTurnBudget>(defaultMaxResponseTurns);
-  const [prompt, setPrompt] = useState(initialScenario?.defaultPrompt ?? "");
+  const [prompt, setPrompt] = useState("");
   const [startUrl, setStartUrl] = useState("");
   const [streamLogs, setStreamLogs] = useState(true);
   const [activeRun, setActiveRun] = useState<RunDetail | null>(null);
@@ -138,7 +138,6 @@ export function useRunStream({
           if (first) {
             setSelectedScenarioId(first.id);
             setMode(first.defaultMode);
-            setPrompt(first.defaultPrompt);
           }
         }
       } catch {

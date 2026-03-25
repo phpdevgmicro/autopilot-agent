@@ -12,27 +12,32 @@ type StageSummaryProps = {
   stageSupportCopy: string | null;
 };
 
+type ConsoleTopbarProps = RunSummaryProps & {
+  runnerBaseUrl: string;
+  stageHeadline: string;
+};
+
+import { ConnectProfileButton } from "./RunControls";
+
 export function ConsoleTopbar({
+  runnerBaseUrl,
   runnerOnline,
-}: RunSummaryProps) {
+  stageHeadline,
+}: ConsoleTopbarProps) {
   return (
     <header className="consoleTopbar">
-      <div className="brandBlock">
-        <div className="brandMark">
-          <img
-            src="https://ibridgedigital.com/assets/img/iblogo.png"
-            alt="Agent John Wicks"
-            style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: 'inherit' }}
-          />
+      <div className="brandBlock" style={{ gap: '16px' }}>
+        <div className="brandMark" style={{ display: 'flex', alignItems: 'center' }}>
+          <img src="https://www.ibridgedigital.com/assets/img/iblogo.png" alt="IB Logo" style={{ height: '24px', objectFit: 'contain' }} />
         </div>
-        <div className="brandCopy">
-          <h1>{appName}</h1>
+        <div className="brandCopy" style={{ margin: 0 }}>
+          <span style={{ fontSize: '1.05rem', fontWeight: 600, color: 'var(--text)' }}>{appName}</span>
         </div>
       </div>
-      <div className="statusCluster">
-        <div className={`statusPill ${runnerOnline ? "ok" : "error"}`}>
-          <span className="statusDot" />
-          {runnerOnline ? "Engine Online" : "Engine Offline"}
+      <div className="statusCluster" style={{ gap: '16px' }}>
+        <ConnectProfileButton runnerBaseUrl={runnerBaseUrl} />
+        <div className="topbarStatusPill" style={{ background: 'rgba(255, 255, 255, 0.04)', padding: '6px 14px', borderRadius: '16px' }}>
+          {stageHeadline}
         </div>
       </div>
     </header>
@@ -43,12 +48,5 @@ export function RunSummary({
   stageHeadline,
   stageSupportCopy,
 }: StageSummaryProps) {
-  return (
-    <div className="stageReviewMeta">
-      <div className="stageStatusStrip">
-        <span className="stageStatusItem">{stageHeadline}</span>
-      </div>
-      {stageSupportCopy ? <p className="stageNow">{stageSupportCopy}</p> : null}
-    </div>
-  );
+  return null;
 }

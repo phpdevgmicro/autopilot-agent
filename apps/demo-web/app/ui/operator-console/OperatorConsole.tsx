@@ -3,14 +3,16 @@
 import { useState, useEffect } from "react";
 import { formatClock, formatRunnerIssueMessage, scenarioTargetDisplay } from "./helpers";
 import { ActivityFeed } from "./ActivityFeed";
+import { IconMonitor, IconActivity, IconBarChart, IconCheckCircle } from "./Icons";
 import { RunControls, RunActionButtons } from "./RunControls";
 import { ConsoleTopbar, RunSummary } from "./RunSummary";
 import { ScreenshotPane } from "./ScreenshotPane";
 import { WalkthroughSummary } from "./WalkthroughSummary";
 import type { OperatorConsoleProps } from "./types";
 import { useRunStream } from "./useRunStream";
+import { LogsTab } from "./LogsTab";
 
-type StageTab = "browser" | "activity" | "walkthrough";
+type StageTab = "browser" | "activity" | "summary" | "logs";
 
 export function OperatorConsole({
   initialRunnerIssue,
@@ -80,53 +82,62 @@ export function OperatorConsole({
   const issueMessage = currentIssue ? formatRunnerIssueMessage(currentIssue) : null;
   const stageHeadline = selectedRun
     ? selectedRun.run.status === "running"
-      ? "Agent active"
+      ? "Agent deployed"
       : selectedRun.run.status === "completed"
-        ? "Task completed"
+        ? "Mission complete"
         : selectedRun.run.status === "cancelled"
-          ? "Task cancelled"
-          : currentIssue?.title ?? "Task failed"
+          ? "Mission cancelled"
+          : currentIssue?.title ?? "Mission failed"
     : matchingWorkspaceState
-      ? "Workspace reset"
+      ? "Workspace cleared"
       : currentIssue
         ? currentIssue.title
         : runnerOnline
-          ? "Ready"
-          : "Runner offline";
+          ? "Standing by"
+          : "Engine offline";
   const stageSupportCopy = selectedRun
     ? selectedRun.run.status === "failed"
       ? issueMessage
       : null
     : matchingWorkspaceState
-      ? `Workspace reset at ${formatClock(matchingWorkspaceState.resetAt)}.`
+      ? `Workspace cleared at ${formatClock(matchingWorkspaceState.resetAt)}.`
       : currentIssue
         ? issueMessage
         : runnerOnline
-        ? "Enter a URL and instructions, then start the agent."
+        ? "Define a target and mission objective, then deploy the agent."
         : issueMessage;
   const topbarSubtitle = selectedRun
-    ? `Running ${selectedScenarioTitle}`
-    : "Autonomous browser agent — give it a URL and instructions.";
+    ? `Executing ${selectedScenarioTitle}`
+    : "AI-powered browser agent";
   const emptyReviewMessage = selectedRun
     ? selectedRun.run.status === "running"
-      ? "The agent is active. The first captured frame will appear here shortly."
+      ? "Agent is active — the first captured frame will appear here shortly."
       : selectedRun.run.status === "failed"
-        ? issueMessage ?? "The agent failed before a screenshot was captured."
-        : "The agent finished without a captured browser frame."
+        ? issueMessage ?? "The mission failed before any frames were captured."
+        : "The agent completed without capturing browser frames."
     : currentIssue
       ? issueMessage ?? currentIssue.error
       : runnerOnline
-        ? "Start the agent to begin reviewing captured frames."
-        : issueMessage ?? "Runner is unavailable.";
+        ? "Configure your target and objective to begin."
+        : issueMessage ?? "Engine is unavailable.";
+  const emptyReviewHeading = selectedRun
+    ? selectedRun.run.status === "running"
+      ? "Agent Active"
+      : selectedRun.run.status === "failed"
+        ? "Mission Failed"
+        : "Complete"
+    : runnerOnline
+      ? "Ready to Deploy"
+      : "Offline";
   const emptyTimelineMessage = selectedRun
     ? selectedRun.run.status === "failed"
-      ? issueMessage ?? "The agent ended before any captures were saved."
-      : "Captured frames will appear here as the agent progresses."
+      ? issueMessage ?? "Mission ended before any frames were captured."
+      : "Frames will appear here as the mission progresses."
     : currentIssue
       ? issueMessage ?? currentIssue.error
       : runnerOnline
-        ? "Captured frames will appear here once the agent starts."
-        : issueMessage ?? "Runner is unavailable.";
+        ? "Frames will appear here once the agent deploys."
+        : issueMessage ?? "Engine is unavailable.";
 
   const isRunFinished = selectedRun && (
     selectedRun.run.status === "completed" ||
@@ -134,10 +145,10 @@ export function OperatorConsole({
     selectedRun.run.status === "cancelled"
   );
 
-  // Auto-switch to walkthrough tab when run finishes
+  // Auto-switch to summary tab when run finishes
   useEffect(() => {
     if (isRunFinished) {
-      setActiveTab("walkthrough");
+      setActiveTab("summary");
     }
   }, [isRunFinished]);
 
@@ -152,7 +163,9 @@ export function OperatorConsole({
     <main className="consoleShell">
       <section className="consoleFrame">
         <ConsoleTopbar
+          runnerBaseUrl={runnerBaseUrl}
           runnerOnline={runnerOnline}
+          stageHeadline={stageHeadline}
           topbarSubtitle={topbarSubtitle}
         />
 
@@ -178,47 +191,51 @@ export function OperatorConsole({
 
           <section className="stageColumn">
             <div className="stageControlBar">
-              <RunSummary
-                stageHeadline={stageHeadline}
-                stageSupportCopy={stageSupportCopy}
-              />
-              <div className="stageToolbarRight">
-                <div className="stageTabs">
+              <div className="stageTabs">
                   {/* Tab 1: Browser — live screenshot */}
                   <button
                     className={`stageTab ${activeTab === "browser" ? "active" : ""}`}
                     onClick={() => setActiveTab("browser")}
                     type="button"
                   >
-                    🖥️ Browser
+                    <IconMonitor size={14} /> Browser
                     {screenshots.length > 0 ? (
                       <span className="stageTabBadge">{screenshots.length}</span>
                     ) : null}
                   </button>
 
-                  {/* Tab 2: Activity — event stream */}
+                  {/* Tab 2: Activity — real-time event stream */}
                   <button
                     className={`stageTab ${activeTab === "activity" ? "active" : ""}`}
                     onClick={() => setActiveTab("activity")}
                     type="button"
                   >
-                    ⚡ Activity
+                    <IconActivity size={14} /> Live Feed
                     {activityItems.length > 0 ? (
                       <span className="stageTabBadge">{activityItems.length}</span>
                     ) : null}
                   </button>
 
-                  {/* Tab 3: Walkthrough — post-run report */}
+                  {/* Tab 3: Summary — post-run AI report */}
                   <button
-                    className={`stageTab ${activeTab === "walkthrough" ? "active" : ""} ${isRunFinished ? "stageTabReady" : ""}`}
+                    className={`stageTab ${activeTab === "summary" ? "active" : ""} ${isRunFinished ? "stageTabReady" : ""}`}
                     disabled={!isRunFinished}
-                    onClick={() => setActiveTab("walkthrough")}
+                    onClick={() => setActiveTab("summary")}
                     type="button"
                   >
-                    📋 Walkthrough
+                    <IconBarChart size={14} /> Summary
                     {isRunFinished ? (
-                      <span className="stageTabBadge stageTabBadgeGreen">✓</span>
+                      <span className="stageTabBadge stageTabBadgeGreen"><IconCheckCircle size={10} /></span>
                     ) : null}
+                  </button>
+
+                  {/* Tab 4: Logs — Raw stream debugging */}
+                  <button
+                    className={`stageTab ${activeTab === "logs" ? "active" : ""}`}
+                    onClick={() => setActiveTab("logs")}
+                    type="button"
+                  >
+                    <IconActivity size={14} /> Logs
                   </button>
                 </div>
                 <RunActionButtons
@@ -230,12 +247,12 @@ export function OperatorConsole({
                   startDisabled={startDisabled}
                   stopDisabled={stopDisabled}
                 />
-              </div>
             </div>
 
             {/* ── Tab Content ────────────────────────── */}
             {activeTab === "browser" ? (
               <ScreenshotPane
+                emptyReviewHeading={emptyReviewHeading}
                 emptyReviewMessage={emptyReviewMessage}
                 emptyTimelineMessage={emptyTimelineMessage}
                 onJumpToLatestScreenshot={handleJumpToLatestScreenshot}
@@ -271,12 +288,19 @@ export function OperatorConsole({
                   streamLogs={streamLogs}
                 />
               </div>
-            ) : activeTab === "walkthrough" && isRunFinished ? (
+            ) : activeTab === "summary" && isRunFinished ? (
               <WalkthroughSummary
                 runEvents={runEvents}
                 runnerBaseUrl={runnerBaseUrl}
                 screenshots={screenshots}
                 selectedRun={selectedRun}
+              />
+            ) : null}
+            {activeTab === "logs" ? (
+              <LogsTab
+                runEvents={runEvents}
+                streamLogs={streamLogs}
+                onStreamLogsChange={setStreamLogs}
               />
             ) : null}
           </section>

@@ -100,6 +100,7 @@ export const runEventTypeSchema = z.enum([
   "screenshot_captured",
   "run_progress",
   "verification_completed",
+  "ai_walkthrough_generated",
   "run_completed",
   "run_failed",
   "run_cancelled",

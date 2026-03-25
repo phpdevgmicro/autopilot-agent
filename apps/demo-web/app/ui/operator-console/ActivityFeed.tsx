@@ -5,6 +5,7 @@ import type { RefObject } from "react";
 import type { BrowserScreenshotArtifact } from "@cua-sample/replay-schema";
 
 import { activityFamilyLabel } from "./helpers";
+import { IconSatellite, IconCamera } from "./Icons";
 import type { ActivityItem } from "./types";
 
 type ActivityFeedProps = {
@@ -20,6 +21,17 @@ type ActivityFeedProps = {
   streamLogs: boolean;
 };
 
+/** Map level to accent style */
+function levelIndicator(level: string) {
+  switch (level) {
+    case "error": return "activityLevelError";
+    case "warn": return "activityLevelWarn";
+    case "ok": return "activityLevelOk";
+    case "pending": return "activityLevelPending";
+    default: return "";
+  }
+}
+
 export function ActivityFeed({
   activityFeedLabel,
   activityFeedRef,
@@ -34,14 +46,7 @@ export function ActivityFeed({
 }: ActivityFeedProps) {
   return (
     <section className="railActivity">
-      <div className="feedHeader">
-        <div className="feedHeaderCopy">
-          <h2>Agent activity</h2>
-          <p>
-            Watch tool calls, browser actions, screenshots, and optional
-            verification stream in real time.
-          </p>
-        </div>
+      <div className="feedHeader" style={{ justifyContent: 'flex-end', marginBottom: '12px' }}>
         <div className="feedActions">
           {!followActivityFeed && activityItems.length > 0 ? (
             <button
@@ -49,7 +54,7 @@ export function ActivityFeed({
               onClick={onJumpToLatestActivity}
               type="button"
             >
-              Jump to live
+              ↓ Latest
             </button>
           ) : null}
           <label className="feedToggle">
@@ -58,7 +63,8 @@ export function ActivityFeed({
               onChange={(event) => onStreamLogsChange(event.target.checked)}
               type="checkbox"
             />
-            Stream {activityFeedLabel}
+            <span className={`feedToggleDot ${streamLogs ? "feedToggleDotLive" : ""}`} />
+            {streamLogs ? "Live" : "Paused"}
           </label>
         </div>
       </div>
@@ -70,10 +76,14 @@ export function ActivityFeed({
       >
         {activityItems.length === 0 ? (
           <div className="activityEmpty">
-            <h3>No activity yet</h3>
+            <div className="activityEmptyGraphic">
+              <IconSatellite size={32} className="activityEmptyIcon" />
+              <div className="activityEmptyPulse" />
+            </div>
+            <h3>Awaiting Signal</h3>
             <p>
-              The live trace will appear here once the model starts calling
-              tools, navigating, and finishing the scenario.
+              The live feed will populate once the agent deploys — showing
+              every navigation, click, input, and decision in real time.
             </p>
           </div>
         ) : (
@@ -84,7 +94,7 @@ export function ActivityFeed({
                   (screenshot) => screenshot.id === item.screenshotId,
                 )
               : -1;
-            const rowClassName = `activityRow family-${item.family} level-${item.level}`;
+            const rowClassName = `activityRow ${levelIndicator(item.level)}`;
             const activitySummary = (
               <div className="activitySummary">
                 <div className="activityBody">
@@ -109,7 +119,7 @@ export function ActivityFeed({
                         }}
                         type="button"
                       >
-                        Frame {linkedFrameIndex + 1}
+                        <IconCamera size={11} /> Frame {linkedFrameIndex + 1}
                       </button>
                     ) : null}
                     <time className="activityTime">{item.time}</time>

@@ -9,6 +9,7 @@ import type {
 import { humanizeToken } from "./helpers";
 
 type ScreenshotPaneProps = {
+  emptyReviewHeading: string;
   emptyReviewMessage: string;
   emptyTimelineMessage: string;
   onJumpToLatestScreenshot: () => void;
@@ -28,6 +29,7 @@ type ScreenshotPaneProps = {
 };
 
 export function ScreenshotPane({
+  emptyReviewHeading,
   emptyReviewMessage,
   runnerBaseUrl,
   screenshots,
@@ -42,16 +44,16 @@ export function ScreenshotPane({
 
   return (
     <div className="browserSurface">
-      <div className="stageChrome">
-        <div className="stageUrl">{selectedScreenshot?.pageUrl ?? stageUrl}</div>
-        {screenshotCount > 0 ? (
+      {screenshotCount > 0 ? (
+        <div className="stageChrome">
+          <div className="stageUrl">{selectedScreenshot?.pageUrl ?? stageUrl}</div>
           <div className="stageFrameCount">
             {viewingLiveFrame && selectedRun?.run.status === "running"
               ? "● Live"
               : `Frame ${selectedScreenshotIndex + 1} / ${screenshotCount}`}
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       <div className="browserCanvas">
         <div className={`stageMedia ${selectedScreenshot ? "hasCapture" : ""}`}>
@@ -64,13 +66,10 @@ export function ScreenshotPane({
             />
           ) : (
             <div className="stagePlaceholder">
-              <h3>
-                {selectedRun
-                  ? selectedRun.run.status === "running"
-                    ? "Agent is working..."
-                    : "No frames captured"
-                  : "Ready"}
-              </h3>
+              <div className="deployRing">
+                <div className="deployRingInner" />
+              </div>
+              <h3>{emptyReviewHeading}</h3>
               <p>{emptyReviewMessage}</p>
             </div>
           )}

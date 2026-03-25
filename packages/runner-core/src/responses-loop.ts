@@ -98,12 +98,147 @@ type ResponsesLoopResult = {
 const defaultInterActionDelayMs = Number(process.env.CUA_INTER_ACTION_DELAY_MS ?? "120");
 const toolExecutionTimeoutMs = Number(process.env.CUA_TOOL_TIMEOUT_MS ?? "20000");
 const defaultReasoningEffort = (process.env.CUA_REASONING_EFFORT ?? "medium") as "low" | "medium" | "high";
+const webhookUrl = process.env.CUA_WEBHOOK_URL?.trim() || null;
+
+/**
+ * Retry wrapper with exponential backoff for transient API errors.
+ * Retries on 429 (rate limit), 500, 502, 503, and network errors.
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  baseDelayMs = 1_000,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error: unknown) {
+      lastError = error;
+      const isRetryable =
+        error instanceof Error &&
+        (/429|500|502|503|rate.limit|timeout|ECONNRESET|ECONNREFUSED|fetch failed/i.test(
+          error.message,
+        ));
+      if (!isRetryable || attempt === maxRetries) {
+        throw error;
+      }
+      const delayMs = baseDelayMs * Math.pow(2, attempt);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * POST task result to the configured webhook URL (n8n, etc.).
+ * Fire-and-forget — errors are silently ignored.
+ */
+async function notifyWebhook(payload: Record<string, unknown>) {
+  if (!webhookUrl) return;
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // Webhook delivery is best-effort
+  }
+}
+
+/**
+ * Structured activity log entry for tracking what the agent did.
+ */
+type ActivityLogEntry = {
+  turn: number;
+  timestamp: string;
+  action: string;
+  detail?: string;
+  url?: string;
+  pageTitle?: string;
+};
+
+/**
+ * Generate an AI-powered walkthrough summary of the task.
+ * Uses the same OpenAI API key already configured for the agent.
+ */
+async function generateAiWalkthrough(
+  activityLog: ActivityLogEntry[],
+  taskPrompt: string,
+  agentConclusion: string,
+  model: string,
+  totalInputTokens: number,
+  totalOutputTokens: number,
+  turnsUsed: number,
+  maxTurns: number,
+): Promise<string | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || activityLog.length === 0) return null;
+
+  // Build a concise activity summary for the LLM (max 30 entries to save tokens)
+  const trimmedLog = activityLog.length > 30
+    ? [...activityLog.slice(0, 15), { turn: 0, timestamp: "", action: `... ${activityLog.length - 30} more actions ...` }, ...activityLog.slice(-15)]
+    : activityLog;
+
+  const logText = trimmedLog.map((entry) => {
+    const parts = [`Turn ${entry.turn}: ${entry.action}`];
+    if (entry.detail) parts.push(`  Detail: ${entry.detail.slice(0, 200)}`);
+    if (entry.url) parts.push(`  URL: ${entry.url}`);
+    if (entry.pageTitle) parts.push(`  Page: ${entry.pageTitle}`);
+    return parts.join("\n");
+  }).join("\n");
+
+  const summaryPrompt = `You are an AI that writes clear, concise walkthrough summaries of browser automation tasks.
+
+The user gave this instruction to a browser agent:
+"${taskPrompt}"
+
+Here is the activity log of what the agent did:
+${logText}
+
+Agent's own conclusion:
+"${agentConclusion}"
+
+Stats: ${turnsUsed}/${maxTurns} turns used, ${totalInputTokens} input tokens, ${totalOutputTokens} output tokens.
+
+Write a clear, human-readable walkthrough summary. Structure it as:
+
+## Task
+One sentence describing what was requested.
+
+## What the Agent Did
+A numbered list of the key steps the agent took (not every micro-action, but the meaningful steps grouped logically). Be specific — mention URLs, button names, page titles.
+
+## Result
+What was the outcome? Was the task completed successfully? What did the final state look like?
+
+## Issues
+Any problems encountered (errors, CAPTCHAs, unexpected pages, etc.). If none, say "No issues encountered."
+
+Keep it concise but thorough. Max 300 words.`;
+
+  try {
+    const openai = new OpenAI({ apiKey });
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: summaryPrompt }],
+      max_tokens: 800,
+      temperature: 0.3,
+    });
+    return response.choices?.[0]?.message?.content ?? null;
+  } catch {
+    // AI summary generation is best-effort — don't break the run
+    return null;
+  }
+}
 
 class OpenAIResponsesClient implements ResponsesClient {
   private readonly client: OpenAI;
 
   constructor(apiKey: string) {
-    this.client = new OpenAI({ apiKey });
+    // Injecting a 2-minute explicit connection timeout so dead API sockets abort immediately prompting `withRetry` instead of indefinitely hijacking the workflow.
+    this.client = new OpenAI({ apiKey, timeout: 120_000 });
   }
 
   async create(request: Record<string, unknown>, signal: AbortSignal) {
@@ -722,20 +857,28 @@ export async function runResponsesCodeLoop(
   let nextInput: unknown = input.prompt ?? input.context.detail.run.prompt;
   let finalAssistantMessage: string | undefined;
 
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  const activityLog: ActivityLogEntry[] = [];
+
   for (let turn = 1; turn <= input.maxResponseTurns; turn += 1) {
     assertActive(input.context.signal);
-    const response = await client.create(
-      {
-        instructions: input.instructions,
-        input: nextInput,
-        model: input.context.detail.run.model,
-        parallel_tool_calls: false,
-        previous_response_id: previousResponseId,
-        reasoning: { effort: defaultReasoningEffort },
-        tools: buildCodeToolDefinitions(),
-      },
-      input.context.signal,
+    const response = await withRetry(() =>
+      client.create(
+        {
+          instructions: input.instructions,
+          input: nextInput,
+          model: input.context.detail.run.model,
+          parallel_tool_calls: false,
+          previous_response_id: previousResponseId,
+          reasoning: { effort: defaultReasoningEffort },
+          tools: buildCodeToolDefinitions(),
+        },
+        input.context.signal,
+      ),
     );
+    totalInputTokens += response.usage?.input_tokens ?? 0;
+    totalOutputTokens += response.usage?.output_tokens ?? 0;
     ensureResponseSucceeded(response);
     await emitModelTurnEvent(input.context, response, turn);
 
@@ -744,12 +887,27 @@ export async function runResponsesCodeLoop(
 
     if (functionCalls.length === 0) {
       finalAssistantMessage = extractAssistantMessageText(response) || undefined;
+      activityLog.push({
+        turn,
+        timestamp: new Date().toISOString(),
+        action: "Agent produced final response",
+        detail: finalAssistantMessage?.slice(0, 300),
+      });
       break;
     }
 
     const toolOutputs = [];
 
     for (const functionCall of functionCalls) {
+      activityLog.push({
+        turn,
+        timestamp: new Date().toISOString(),
+        action: `Called function: ${functionCall.name ?? "exec_js"}`,
+        detail: (functionCall.arguments ?? "").slice(0, 200),
+        url: input.session.page.url(),
+        pageTitle: await input.session.page.title().catch(() => undefined),
+      });
+
       if (!functionCall.call_id) {
         throw new Error("Unexpected function call returned from the model.");
       }
@@ -769,17 +927,61 @@ export async function runResponsesCodeLoop(
   }
 
   if (!finalAssistantMessage) {
-    throw new Error(
-      `Responses API code loop exhausted the configured ${input.maxResponseTurns}-turn budget without producing a final assistant message.`,
-    );
+    finalAssistantMessage = `Task partially completed — used all ${input.maxResponseTurns} turns. The agent was still working when the turn budget was exhausted. Consider increasing CUA_MAX_RESPONSE_TURNS for complex tasks.`;
+    await input.context.emitEvent({
+      detail: finalAssistantMessage,
+      level: "warn",
+      message: `Turn budget (${input.maxResponseTurns}) exhausted. Returning partial result.`,
+      type: "run_progress",
+    });
+  } else {
+    await input.context.emitEvent({
+      detail: finalAssistantMessage,
+      level: "ok",
+      message: "Model returned a final response.",
+      type: "run_progress",
+    });
   }
 
   await input.context.emitEvent({
-    detail: finalAssistantMessage,
+    detail: `${totalInputTokens} in · ${totalOutputTokens} out · ${input.maxResponseTurns} max turns`,
     level: "ok",
-    message: "Model returned a final response.",
+    message: "Token usage summary for this run.",
     type: "run_progress",
   });
+
+  await notifyWebhook({
+    event: "task_completed",
+    status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
+    summary: finalAssistantMessage,
+    model: input.context.detail.run.model,
+    totalInputTokens,
+    totalOutputTokens,
+    turnsUsed: input.maxResponseTurns,
+    timestamp: new Date().toISOString(),
+    activityLog,
+  });
+
+  // Generate AI walkthrough summary
+  const aiWalkthrough = await generateAiWalkthrough(
+    activityLog,
+    input.context.detail.run.prompt,
+    finalAssistantMessage,
+    input.context.detail.run.model,
+    totalInputTokens,
+    totalOutputTokens,
+    activityLog.length,
+    input.maxResponseTurns,
+  );
+
+  if (aiWalkthrough) {
+    await input.context.emitEvent({
+      detail: aiWalkthrough,
+      level: "ok",
+      message: "AI-generated task walkthrough.",
+      type: "ai_walkthrough_generated",
+    });
+  }
 
   return {
     finalAssistantMessage,
@@ -814,20 +1016,30 @@ export async function runResponsesNativeComputerLoop(
   ];
   let finalAssistantMessage: string | undefined;
 
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  let lastTurn = 0;
+  const activityLog: ActivityLogEntry[] = [];
+
   for (let turn = 1; turn <= input.maxResponseTurns; turn += 1) {
+    lastTurn = turn;
     assertActive(input.context.signal);
-    const response = await client.create(
-      {
-        instructions: input.instructions,
-        input: nextInput,
-        model: input.context.detail.run.model,
-        parallel_tool_calls: false,
-        previous_response_id: previousResponseId,
-        reasoning: { effort: defaultReasoningEffort },
-        tools: buildComputerToolDefinitions(),
-      },
-      input.context.signal,
+    const response = await withRetry(() =>
+      client.create(
+        {
+          instructions: input.instructions,
+          input: nextInput,
+          model: input.context.detail.run.model,
+          parallel_tool_calls: false,
+          previous_response_id: previousResponseId,
+          reasoning: { effort: defaultReasoningEffort },
+          tools: buildComputerToolDefinitions(),
+        },
+        input.context.signal,
+      ),
     );
+    totalInputTokens += response.usage?.input_tokens ?? 0;
+    totalOutputTokens += response.usage?.output_tokens ?? 0;
     ensureResponseSucceeded(response);
     await emitModelTurnEvent(input.context, response, turn);
 
@@ -838,6 +1050,12 @@ export async function runResponsesNativeComputerLoop(
 
     if (!hasToolCalls) {
       finalAssistantMessage = extractAssistantMessageText(response) || undefined;
+      activityLog.push({
+        turn,
+        timestamp: new Date().toISOString(),
+        action: "Agent produced final response",
+        detail: finalAssistantMessage?.slice(0, 300),
+      });
       break;
     }
 
@@ -862,6 +1080,24 @@ export async function runResponsesNativeComputerLoop(
       }
 
       const actions = outputItem.actions ?? [];
+
+      // Log each action to the activity log
+      for (const action of actions) {
+        const actionType = String((action as Record<string, unknown>).type ?? "unknown");
+        activityLog.push({
+          turn,
+          timestamp: new Date().toISOString(),
+          action: `Browser action: ${actionType}`,
+          detail: actionType === "type" ? `Typed: "${String((action as Record<string, unknown>).text ?? "").slice(0, 100)}"` :
+                  actionType === "click" ? `Clicked at (${(action as Record<string, unknown>).x}, ${(action as Record<string, unknown>).y})` :
+                  actionType === "scroll" ? "Scrolled the page" :
+                  actionType === "keypress" ? `Pressed ${String((action as Record<string, unknown>).key ?? "key")}` :
+                  actionType === "wait" ? "Waited for page" :
+                  actionType,
+          url: input.session.page.url(),
+          pageTitle: await input.session.page.title().catch(() => undefined),
+        });
+      }
 
       await input.context.emitEvent({
         detail: formatActionBatchDetail(actions),
@@ -901,17 +1137,61 @@ export async function runResponsesNativeComputerLoop(
   }
 
   if (!finalAssistantMessage) {
-    throw new Error(
-      `Responses API native loop exhausted the configured ${input.maxResponseTurns}-turn budget without producing a final assistant message.`,
-    );
+    finalAssistantMessage = `Task partially completed — used all ${input.maxResponseTurns} turns. The agent was still working when the turn budget was exhausted. Consider increasing CUA_MAX_RESPONSE_TURNS for complex tasks.`;
+    await input.context.emitEvent({
+      detail: finalAssistantMessage,
+      level: "warn",
+      message: `Turn budget (${input.maxResponseTurns}) exhausted. Returning partial result.`,
+      type: "run_progress",
+    });
+  } else {
+    await input.context.emitEvent({
+      detail: finalAssistantMessage,
+      level: "ok",
+      message: "Model returned a final response.",
+      type: "run_progress",
+    });
   }
 
   await input.context.emitEvent({
-    detail: finalAssistantMessage,
+    detail: `${totalInputTokens} in · ${totalOutputTokens} out · ${lastTurn}/${input.maxResponseTurns} turns`,
     level: "ok",
-    message: "Model returned a final response.",
+    message: "Token usage summary for this run.",
     type: "run_progress",
   });
+
+  await notifyWebhook({
+    event: "task_completed",
+    status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
+    summary: finalAssistantMessage,
+    model: input.context.detail.run.model,
+    totalInputTokens,
+    totalOutputTokens,
+    turnsUsed: lastTurn,
+    timestamp: new Date().toISOString(),
+    activityLog,
+  });
+
+  // Generate AI walkthrough summary
+  const aiWalkthrough = await generateAiWalkthrough(
+    activityLog,
+    input.context.detail.run.prompt,
+    finalAssistantMessage,
+    input.context.detail.run.model,
+    totalInputTokens,
+    totalOutputTokens,
+    lastTurn,
+    input.maxResponseTurns,
+  );
+
+  if (aiWalkthrough) {
+    await input.context.emitEvent({
+      detail: aiWalkthrough,
+      level: "ok",
+      message: "AI-generated task walkthrough.",
+      type: "ai_walkthrough_generated",
+    });
+  }
 
   return {
     finalAssistantMessage,

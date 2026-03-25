@@ -97,6 +97,32 @@ export async function launchBrowserSession(
 
   const profileDir = process.env.CUA_BROWSER_PROFILE_DIR ?? defaultProfileDir;
   const usePersistentProfile = process.env.CUA_BROWSER_PERSIST !== "false";
+  const locale = process.env.CUA_BROWSER_LOCALE ?? "en-US";
+
+  // Download directory — inside the workspace so agent can reference downloaded files
+  const downloadDir = join(options.workspacePath, "downloads");
+  await mkdir(downloadDir, { recursive: true });
+
+  // Realistic user-agent to avoid bot detection (Google /sorry/index, etc.)
+  const userAgent =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+
+  // Common Chromium flags for anti-bot stealth + GPU stability
+  const stealthArgs = [
+    `--window-size=${viewport.width},${viewport.height}`,
+    "--disable-blink-features=AutomationControlled",
+    "--disable-infobars",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-features=IsolateOrigins,site-per-process",
+    // Prevent GPU process crashes which cause "Protocol error (Page.captureScreenshot)"
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-dev-shm-usage",
+  ];
 
   let browser: Browser | null = null;
   let context: BrowserContext;
@@ -106,26 +132,40 @@ export async function launchBrowserSession(
     // Persistent context — keeps cookies, login, profile data across runs
     await mkdir(profileDir, { recursive: true });
     context = await chromium.launchPersistentContext(profileDir, {
-      args: [
-        `--window-size=${viewport.width},${viewport.height}`,
-        "--disable-blink-features=AutomationControlled",
-      ],
+      args: stealthArgs,
       headless: options.browserMode === "headless",
       viewport,
+      locale,
+      userAgent,
       ignoreDefaultArgs: ["--enable-automation"],
+      acceptDownloads: true,
+      permissions: ["clipboard-read", "clipboard-write"],
+      channel: "chrome",
     });
     page = context.pages()[0] ?? await context.newPage();
   } else {
     // Ephemeral context — clean Chromium each time (original behavior)
     browser = await chromium.launch({
-      args: [`--window-size=${viewport.width},${viewport.height}`],
+      args: stealthArgs,
       headless: options.browserMode === "headless",
+      channel: "chrome",
     });
     context = await browser.newContext({
       viewport,
+      locale,
+      userAgent,
+      acceptDownloads: true,
+      permissions: ["clipboard-read", "clipboard-write"],
     });
     page = await context.newPage();
   }
+
+  // Remove navigator.webdriver flag to avoid bot detection
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", {
+      get: () => undefined,
+    });
+  });
 
   let screenshotCount = 0;
 
@@ -143,9 +183,23 @@ export async function launchBrowserSession(
         options.screenshotDir,
         `${String(screenshotCount).padStart(3, "0")}-${sanitizeLabel(label)}.png`,
       );
-      await page.screenshot({
-        path,
-      });
+      // Retry screenshot up to 3 times — Chromium GPU process can crash transiently
+      let lastScreenshotError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          await page.screenshot({ path });
+          lastScreenshotError = null;
+          break;
+        } catch (err) {
+          lastScreenshotError = err;
+          if (attempt < 3) {
+            await new Promise((r) => setTimeout(r, 500 * attempt));
+          }
+        }
+      }
+      if (lastScreenshotError) {
+        throw lastScreenshotError;
+      }
 
       let pageTitle = "";
       try {
