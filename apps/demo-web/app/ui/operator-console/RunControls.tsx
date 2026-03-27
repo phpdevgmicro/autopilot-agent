@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from "react";
 import type { ActionButtonsProps } from "./types";
 import { IconPlay, IconStop, IconRefresh, IconLoader, IconTarget } from "./Icons";
 
+const optimizeWebhookUrl = process.env.NEXT_PUBLIC_OPTIMIZE_WEBHOOK_URL || "";
+
 type RunControlsProps = ActionButtonsProps & {
   controlsLocked: boolean;
   onPromptChange: (value: string) => void;
@@ -118,6 +120,37 @@ export function RunControls({
   startUrl,
   ...actionButtons
 }: RunControlsProps) {
+  const [optimizing, setOptimizing] = useState(false);
+  const [optimizeError, setOptimizeError] = useState<string | null>(null);
+
+  const canOptimize = !controlsLocked && !optimizing && prompt.trim().length > 0 && optimizeWebhookUrl.length > 0;
+
+  const handleOptimize = async () => {
+    if (!canOptimize) return;
+    setOptimizing(true);
+    setOptimizeError(null);
+    try {
+      const res = await fetch(optimizeWebhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, startUrl }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const optimized = data.optimizedPrompt || data.prompt || "";
+      if (optimized) {
+        onPromptChange(optimized);
+      } else {
+        throw new Error("No optimized prompt returned");
+      }
+    } catch (err) {
+      setOptimizeError(err instanceof Error ? err.message : "Optimization failed");
+      setTimeout(() => setOptimizeError(null), 4000);
+    } finally {
+      setOptimizing(false);
+    }
+  };
+
   return (
     <aside className="controlsPanel">
       <div className="controlsHeader">
@@ -138,15 +171,32 @@ export function RunControls({
         </div>
 
         <div className="railField promptField">
-          <label htmlFor="run-prompt">Mission Objective</label>
+          <div className="promptLabelRow">
+            <label htmlFor="run-prompt">Mission Objective</label>
+            {optimizeWebhookUrl ? (
+              <button
+                className={`optimizeBtn ${optimizing ? "optimizeBtnLoading" : ""}`}
+                disabled={!canOptimize}
+                onClick={() => void handleOptimize()}
+                title="Smart optimize — AI rewrites your prompt for better agent performance"
+                type="button"
+              >
+                <span className="optimizeBtnIcon">✨</span>
+                {optimizing ? <span className="optimizeBtnText">Optimizing...</span> : <span className="optimizeBtnText">Optimize</span>}
+              </button>
+            ) : null}
+          </div>
           <textarea
-            disabled={controlsLocked}
+            disabled={controlsLocked || optimizing}
             id="run-prompt"
             onChange={(event) => onPromptChange(event.target.value)}
             placeholder="Navigate to the target URL and describe what you see on the page."
             rows={6}
             value={prompt}
           />
+          {optimizeError ? (
+            <span className="optimizeError">{optimizeError}</span>
+          ) : null}
         </div>
       </div>
 
