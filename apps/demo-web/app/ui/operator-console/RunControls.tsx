@@ -91,11 +91,7 @@ export function RunActionButtons({
       <button
         className="actionBtnDanger"
         disabled={stopDisabled}
-        onClick={() => {
-          if (window.confirm("Abort the current mission? The agent will stop immediately.")) {
-            void onStopRun();
-          }
-        }}
+        onClick={() => void onStopRun()}
         type="button"
         title="Abort mission"
       >
@@ -104,11 +100,7 @@ export function RunActionButtons({
       <button
         className="actionBtnNeutral"
         disabled={resetDisabled}
-        onClick={() => {
-          if (window.confirm("Reset workspace to clean state? All current run data will be cleared.")) {
-            void onResetWorkspace();
-          }
-        }}
+        onClick={() => void onResetWorkspace()}
         type="button"
         title="Reset workspace"
       >
