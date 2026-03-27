@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { RunDetail, RunEvent, BrowserScreenshotArtifact } from "@cua-sample/replay-schema";
-import { formatClock } from "./helpers";
+import { appName, formatClock } from "./helpers";
 
 type WalkthroughSummaryProps = {
   runEvents: RunEvent[];
@@ -176,7 +176,7 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
           <div className="summaryAiCard">
             <div className="summaryAiHeader">
               <span className="summaryAiIcon">🤖</span>
-              <span className="summaryAiTitle">AI Summary</span>
+              <span className="summaryAiTitle">{appName}</span>
             </div>
             <div className="summaryAiBody">
               {renderAiContent(aiSummary)}
@@ -186,7 +186,7 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
           <div className="summaryAiCard summaryAiCardLoading">
             <div className="summaryAiHeader">
               <span className="summaryAiIcon">🤖</span>
-              <span className="summaryAiTitle">AI Summary</span>
+              <span className="summaryAiTitle">{appName}</span>
             </div>
             <div className="summaryAiBody">
               <p className="summaryAiPulse">Analyzing agent activity and generating summary...</p>

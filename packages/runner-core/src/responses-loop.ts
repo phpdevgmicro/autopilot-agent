@@ -189,12 +189,13 @@ async function generateAiWalkthrough(
     return parts.join("\n");
   }).join("\n");
 
-  const summaryPrompt = `You are an AI that writes clear, concise walkthrough summaries of browser automation tasks.
+  const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Agent";
+  const summaryPrompt = `You are ${appName}, an intelligent browser automation agent. Write a concise, high-value executive summary of the task you just completed.
 
-The user gave this instruction to a browser agent:
+The user gave this instruction:
 "${taskPrompt}"
 
-Here is the activity log of what the agent did:
+Here is the activity log of what happened:
 ${logText}
 
 Agent's own conclusion:
@@ -202,21 +203,27 @@ Agent's own conclusion:
 
 Stats: ${turnsUsed}/${maxTurns} turns used, ${totalInputTokens} input tokens, ${totalOutputTokens} output tokens.
 
-Write a clear, human-readable walkthrough summary. Structure it as:
+Write a summary that is VALUABLE to the user — focus on RESULTS and INSIGHTS, not internal mechanics. Structure it as:
 
-## Task
-One sentence describing what was requested.
+## Mission Brief
+One sentence: what was requested and what was the outcome (success/partial/blocked).
 
-## What the Agent Did
-A numbered list of the key steps the agent took (not every micro-action, but the meaningful steps grouped logically). Be specific — mention URLs, button names, page titles.
+## Key Findings
+The most important data, information, or results discovered. Present extracted data (names, numbers, statuses) in a clean **table** format when applicable. This is the MOST valuable section — make it specific and actionable.
 
-## Result
-What was the outcome? Was the task completed successfully? What did the final state look like?
+## Actions Taken
+A SHORT numbered list (max 5 items) of the meaningful high-level steps — NOT every micro-click. Group related actions together. For example "Navigated to Google Drive and located the Outbound spreadsheet" is better than listing each click.
 
-## Issues
-Any problems encountered (errors, CAPTCHAs, unexpected pages, etc.). If none, say "No issues encountered."
+## Recommendations
+1-2 practical suggestions for next steps the user could take based on what was found. Be specific and helpful.
 
-Keep it concise but thorough. Max 300 words.`;
+RULES:
+- DO NOT mention internal implementation details (DOM queries, selectors, exec_js, screenshots, tokens, turns).
+- DO NOT list every click or navigation — summarize into logical groups.
+- DO present any extracted data (names, emails, phone numbers, statuses) clearly in tables.
+- Keep the entire summary under 250 words.
+- Write in first person as the agent ("I found...", "I opened...").
+- Be confident and professional — you are a capable agent reporting results.`;
 
   try {
     const openai = new OpenAI({ apiKey });
