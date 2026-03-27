@@ -203,6 +203,9 @@ export function createServer(options: CreateServerOptions = {}) {
     };
   });
 
+  // Track active remote-login browser on VM
+  let remoteLoginCtx: Awaited<ReturnType<typeof import("playwright").chromium.launchPersistentContext>> | null = null;
+
   app.post("/api/browser/connect-profile", async (_request, reply) => {
     if (process.env.CUA_BROWSER_PERSIST === "false") {
       reply.code(400);
@@ -212,9 +215,8 @@ export function createServer(options: CreateServerOptions = {}) {
       };
     }
 
-    // Launch browser directly — no terminal window
     const { chromium } = await import("playwright");
-    const { mkdir } = await import("node:fs/promises");
+    const { mkdir, unlink } = await import("node:fs/promises");
 
     try {
       await mkdir(profileDir, { recursive: true });
@@ -226,40 +228,99 @@ export function createServer(options: CreateServerOptions = {}) {
       };
     }
 
-    // On a remote headless VM, attempting to open a visible browser window (headless: false) 
-    // will immediately crash because there is no desktop GUI display (X11/Wayland).
-    // The safest way to authenticate a headless VM is to log in locally and upload the saved profile folder via SCP.
-    try {
-      // Fire-and-forget: open headed browser for login
-      chromium.launchPersistentContext(profileDir, {
-        headless: false,
-        args: [
-          "--window-size=1280,900",
-          "--disable-blink-features=AutomationControlled",
-        ],
-        ignoreDefaultArgs: ["--enable-automation"],
-        viewport: { width: 1280, height: 900 },
-        ...(process.env.CUA_BROWSER_CHANNEL ? { channel: process.env.CUA_BROWSER_CHANNEL } : {}),
-      }).then(async (context) => {
-        const page = context.pages()[0] ?? await context.newPage();
-        await page.goto("https://accounts.google.com");
-        // Browser stays open until user closes it
-      }).catch((err) => {
-        console.error("Failed to launch headful profile window. This is expected on remote headless VMs:", err.message);
-      });
-
-      return {
-        status: "launched",
-        message: "Browser window requested. Note: If you generated this request on a remote headless VM, the process will fail because VMs have no display GUI. You must authenticate locally and upload your profile directory.",
-        profileDir,
-      };
-    } catch (err: unknown) {
-      reply.code(500);
-      return {
-        error: "Failed to trigger GUI launch",
-        hint: String(err),
-      };
+    // Clear stale lock files from crashed sessions
+    for (const f of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
+      try { await unlink(join(profileDir, f)); } catch { /* fine */ }
     }
+
+    // Detect headless VM: Linux without a DISPLAY env var
+    const isHeadlessVM = process.platform === "linux" && !process.env.DISPLAY;
+
+    if (isHeadlessVM) {
+      // ── VM mode: headless + remote debugging on port 9222 ──
+      try {
+        if (remoteLoginCtx) {
+          try { await remoteLoginCtx.close(); } catch { /* ok */ }
+          remoteLoginCtx = null;
+        }
+
+        remoteLoginCtx = await chromium.launchPersistentContext(profileDir, {
+          headless: true,
+          args: [
+            "--remote-debugging-port=9222",
+            "--remote-debugging-address=0.0.0.0",
+            "--window-size=1280,900",
+            "--disable-blink-features=AutomationControlled",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+          ],
+          ignoreDefaultArgs: ["--enable-automation"],
+          viewport: { width: 1280, height: 900 },
+        });
+
+        const page = remoteLoginCtx.pages()[0] ?? await remoteLoginCtx.newPage();
+        await page.goto("https://accounts.google.com");
+        console.log("[connect-profile] VM mode: browser on port 9222. SSH tunnel to access.");
+
+        return {
+          status: "launched",
+          mode: "remote",
+          message: "Browser launched on port 9222. SSH tunnel and open http://localhost:9222 to log in.",
+          instructions: [
+            "Run: ssh -L 9222:localhost:9222 user@vm-ip",
+            "Open: http://localhost:9222",
+            "Click page → Log in to Google",
+            "Click 'Done' to save profile",
+          ],
+          profileDir,
+        };
+      } catch (err: unknown) {
+        reply.code(500);
+        return { error: "Failed to launch remote browser", hint: String(err) };
+      }
+    } else {
+      // ── Local mode: open headed browser window ──
+      try {
+        chromium.launchPersistentContext(profileDir, {
+          headless: false,
+          args: [
+            "--window-size=1280,900",
+            "--disable-blink-features=AutomationControlled",
+          ],
+          ignoreDefaultArgs: ["--enable-automation"],
+          viewport: { width: 1280, height: 900 },
+          ...(process.env.CUA_BROWSER_CHANNEL ? { channel: process.env.CUA_BROWSER_CHANNEL } : {}),
+        }).then(async (context) => {
+          const page = context.pages()[0] ?? await context.newPage();
+          await page.goto("https://accounts.google.com");
+        }).catch((err) => {
+          console.error("Failed to launch profile window:", err.message);
+        });
+
+        return {
+          status: "launched",
+          mode: "local",
+          message: "Browser window opened. Log in to Google, then close the browser.",
+          profileDir,
+        };
+      } catch (err: unknown) {
+        reply.code(500);
+        return { error: "Failed to launch browser", hint: String(err) };
+      }
+    }
+  });
+
+  // Close remote login browser and save profile (VM only)
+  app.post("/api/browser/finish-profile-login", async () => {
+    if (remoteLoginCtx) {
+      try { await remoteLoginCtx.close(); } catch { /* ok */ }
+      remoteLoginCtx = null;
+      return { status: "saved", message: "Profile saved. Restart app to use." };
+    }
+    return { status: "no_session" };
   });
 
   return app;
