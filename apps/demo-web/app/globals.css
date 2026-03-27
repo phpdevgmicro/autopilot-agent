@@ -1697,3 +1697,160 @@ code,
     height: 42px;
   }
 }
+
+/* ── Logs Tab ────────────────────────────────────────── */
+.logsContainer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: #09090b;
+  font-family: var(--mono);
+  padding: 16px;
+}
+
+.logsHeader {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.logsToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.logsToggle input {
+  accent-color: var(--accent);
+}
+
+.logsToggleDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: all 200ms ease;
+}
+
+.logsToggleDotLive {
+  background: var(--ok);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+}
+
+.logsScroll {
+  flex-grow: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.logsEmpty {
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: 20px;
+}
+
+.logsRow {
+  display: flex;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 4px;
+}
+
+.logsTime {
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 95px;
+}
+
+.logsLevel {
+  width: 60px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.logsLevel--error { color: var(--error); }
+.logsLevel--warn { color: var(--warn); }
+.logsLevel--ok { color: var(--ok); }
+.logsLevel--info { color: var(--accent); }
+
+.logsMessage {
+  color: var(--text);
+}
+
+.logsDetail {
+  color: var(--text-secondary);
+}
+
+/* ── Error Boundary ──────────────────────────────────── */
+.errorBoundary {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.errorBoundaryCard {
+  max-width: 420px;
+  text-align: center;
+  padding: 40px 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+}
+
+.errorBoundaryIcon {
+  font-size: 2.5rem;
+  margin-bottom: 12px;
+}
+
+.errorBoundaryTitle {
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.errorBoundaryMessage {
+  margin: 0 0 24px;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.errorBoundaryRetry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 24px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 150ms ease, transform 150ms ease;
+}
+
+.errorBoundaryRetry:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+.errorBoundaryRetry:active {
+  transform: translateY(0);
+}

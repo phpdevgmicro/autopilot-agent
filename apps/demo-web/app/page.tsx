@@ -7,6 +7,7 @@ import {
   createRunnerUnavailableIssue,
   parseRunnerIssue,
 } from "./ui/operator-console/helpers";
+import { ErrorBoundary } from "./ui/operator-console/ErrorBoundary";
 import { OperatorConsole } from "./ui/operator-console";
 import type { RunnerIssue } from "./ui/operator-console/types";
 
@@ -57,10 +58,12 @@ export default async function HomePage() {
   const { runnerIssue, scenarios } = await loadScenarios();
 
   return (
-    <OperatorConsole
-      initialRunnerIssue={runnerIssue}
-      runnerBaseUrl={runnerBaseUrl}
-      scenarios={scenarios}
-    />
+    <ErrorBoundary>
+      <OperatorConsole
+        initialRunnerIssue={runnerIssue}
+        runnerBaseUrl={runnerBaseUrl}
+        scenarios={scenarios}
+      />
+    </ErrorBoundary>
   );
 }

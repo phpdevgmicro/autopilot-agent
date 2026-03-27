@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/index.ts",
+    "dev": "node --env-file-if-exists=../../.env --import tsx --watch-path=src --watch src/index.ts",
     "build": "tsup --config tsup.config.ts",
     "start": "node --env-file-if-exists=../../.env dist/index.js",
     "playwright:install": "playwright install chromium",

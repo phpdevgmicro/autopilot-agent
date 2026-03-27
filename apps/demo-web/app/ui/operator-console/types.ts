@@ -4,6 +4,8 @@ import type {
   ScenarioManifest,
 } from "@cua-sample/replay-schema";
 
+import type { RunnerIssue } from "./issues";
+
 export type OperatorConsoleProps = {
   initialRunnerIssue: RunnerIssue | null;
   runnerBaseUrl: string;
@@ -43,12 +45,7 @@ export type ActivityItem = {
 
 export type PendingAction = "reset" | "start" | "stop" | null;
 
-export type RunnerIssue = {
-  code: string;
-  error: string;
-  hint?: string;
-  title: string;
-};
+export type { RunnerIssue } from "./issues";
 
 export type ActionButtonsProps = {
   onResetWorkspace: () => Promise<void>;

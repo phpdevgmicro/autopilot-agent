@@ -2,18 +2,9 @@
 
 import { appName, appSubtitle } from "./helpers";
 
-type RunSummaryProps = {
-  runnerOnline: boolean;
-  topbarSubtitle: string;
-};
-
-type StageSummaryProps = {
-  stageHeadline: string;
-  stageSupportCopy: string | null;
-};
-
-type ConsoleTopbarProps = RunSummaryProps & {
+type ConsoleTopbarProps = {
   runnerBaseUrl: string;
+  runnerOnline: boolean;
   stageHeadline: string;
 };
 
@@ -42,11 +33,4 @@ export function ConsoleTopbar({
       </div>
     </header>
   );
-}
-
-export function RunSummary({
-  stageHeadline,
-  stageSupportCopy,
-}: StageSummaryProps) {
-  return null;
 }

@@ -5,7 +5,7 @@ import { formatClock, formatRunnerIssueMessage, scenarioTargetDisplay } from "./
 import { ActivityFeed } from "./ActivityFeed";
 import { IconMonitor, IconActivity, IconBarChart, IconCheckCircle } from "./Icons";
 import { RunControls, RunActionButtons } from "./RunControls";
-import { ConsoleTopbar, RunSummary } from "./RunSummary";
+import { ConsoleTopbar } from "./RunSummary";
 import { ScreenshotPane } from "./ScreenshotPane";
 import { WalkthroughSummary } from "./WalkthroughSummary";
 import type { OperatorConsoleProps } from "./types";
@@ -106,9 +106,7 @@ export function OperatorConsole({
         : runnerOnline
         ? "Define a target and mission objective, then deploy the agent."
         : issueMessage;
-  const topbarSubtitle = selectedRun
-    ? `Executing ${selectedScenarioTitle}`
-    : "AI-powered browser agent";
+
   const emptyReviewMessage = selectedRun
     ? selectedRun.run.status === "running"
       ? "Agent is active — the first captured frame will appear here shortly."
@@ -154,10 +152,10 @@ export function OperatorConsole({
 
   // Reset to browser tab when run is cleared (Reset button)
   useEffect(() => {
-    if (!selectedRun) {
+    if (!selectedRun || matchingWorkspaceState) {
       setActiveTab("browser");
     }
-  }, [selectedRun]);
+  }, [selectedRun, matchingWorkspaceState]);
 
   return (
     <main className="consoleShell">
@@ -166,7 +164,6 @@ export function OperatorConsole({
           runnerBaseUrl={runnerBaseUrl}
           runnerOnline={runnerOnline}
           stageHeadline={stageHeadline}
-          topbarSubtitle={topbarSubtitle}
         />
 
         <section className="benchTop">
@@ -295,8 +292,7 @@ export function OperatorConsole({
                 screenshots={screenshots}
                 selectedRun={selectedRun}
               />
-            ) : null}
-            {activeTab === "logs" ? (
+            ) : activeTab === "logs" ? (
               <LogsTab
                 runEvents={runEvents}
                 streamLogs={streamLogs}
