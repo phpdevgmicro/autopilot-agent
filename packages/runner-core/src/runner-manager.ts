@@ -35,6 +35,22 @@ import { createDefaultRunExecutor } from "./executor-registry.js";
 import { RunnerCoreError } from "./errors.js";
 import { RunAbortedError, type RunExecutor } from "./scenario-runtime.js";
 
+// ── Webhook helper ──────────────────────────────────────────────────
+const webhookUrl = process.env.CUA_WEBHOOK_URL?.trim() || null;
+
+async function notifyWebhookFromManager(payload: Record<string, unknown>) {
+  if (!webhookUrl) return;
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // Webhook delivery is best-effort
+  }
+}
+
 type RunSubscriber = (event: RunEvent) => void;
 
 type InternalRunContext = {
@@ -261,6 +277,19 @@ export class RunnerManager {
       level: "warn",
       message: "Run cancelled before completion.",
       type: "run_cancelled",
+    });
+
+    // Notify webhook so cancelled runs are logged to the sheet
+    void notifyWebhookFromManager({
+      event: "task_completed",
+      status: "cancelled",
+      summary: reason,
+      model: context.detail.run.model,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      turnsUsed: context.detail.events.length,
+      timestamp: new Date().toISOString(),
+      activityLog: [],
     });
 
     this.activeRunIds.delete(runId);
@@ -526,6 +555,19 @@ export class RunnerManager {
       level: "error",
       message: "Run failed during execution.",
       type: "run_failed",
+    });
+
+    // Notify webhook so failed/crashed runs are logged to the sheet
+    void notifyWebhookFromManager({
+      event: "task_completed",
+      status: "failed",
+      summary: `Error: ${message}${runnerError?.hint ? ` | Hint: ${runnerError.hint}` : ""}`,
+      model: context.detail.run.model,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      turnsUsed: context.detail.events.length,
+      timestamp: new Date().toISOString(),
+      activityLog: [],
     });
 
     this.activeRunIds.delete(context.detail.run.id);
