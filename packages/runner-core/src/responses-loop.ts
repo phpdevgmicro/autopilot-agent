@@ -6,6 +6,8 @@ import OpenAI from "openai";
 import { type BrowserSession } from "@cua-sample/browser-runtime";
 
 import { RunnerCoreError } from "./errors.js";
+import { maskCredentials } from "./credential-mask.js";
+import { getPrompt, isPromptStoreSynced } from "./prompt-store.js";
 import type { RunExecutionContext } from "./scenario-runtime.js";
 
 type ComputerAction = {
@@ -154,9 +156,9 @@ type ActivityLogEntry = {
   turn: number;
   timestamp: string;
   action: string;
-  detail?: string;
-  url?: string;
-  pageTitle?: string;
+  detail?: string | undefined;
+  url?: string | undefined;
+  pageTitle?: string | undefined;
 };
 
 /**
@@ -190,40 +192,30 @@ async function generateAiWalkthrough(
   }).join("\n");
 
   const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Agent";
-  const summaryPrompt = `You are ${appName}, an intelligent browser automation agent. Write a concise, high-value executive summary of the task you just completed.
 
-The user gave this instruction:
-"${taskPrompt}"
+  let summaryPrompt: string;
+  
+  // Try Google Sheet prompt first, fall back to built-in default
+  if (isPromptStoreSynced()) {
+    const sheetPrompt = getPrompt("walkthrough_summary_prompt", {
+      appName,
+      taskPrompt,
+      logText,
+      agentConclusion,
+      turnsUsed: String(turnsUsed),
+      maxTurns: String(maxTurns),
+      totalInputTokens: String(totalInputTokens),
+      totalOutputTokens: String(totalOutputTokens),
+    });
 
-Here is the activity log of what happened:
-${logText}
-
-Agent's own conclusion:
-"${agentConclusion}"
-
-Stats: ${turnsUsed}/${maxTurns} turns used, ${totalInputTokens} input tokens, ${totalOutputTokens} output tokens.
-
-Write a summary that is VALUABLE to the user — focus on RESULTS and INSIGHTS, not internal mechanics. Structure it as:
-
-## Mission Brief
-One sentence: what was requested and what was the outcome (success/partial/blocked).
-
-## Key Findings
-The most important data, information, or results discovered. Present extracted data (names, numbers, statuses) in a clean **table** format when applicable. This is the MOST valuable section — make it specific and actionable.
-
-## Actions Taken
-A SHORT numbered list (max 5 items) of the meaningful high-level steps — NOT every micro-click. Group related actions together. For example "Navigated to Google Drive and located the Outbound spreadsheet" is better than listing each click.
-
-## Recommendations
-1-2 practical suggestions for next steps the user could take based on what was found. Be specific and helpful.
-
-RULES:
-- DO NOT mention internal implementation details (DOM queries, selectors, exec_js, screenshots, tokens, turns).
-- DO NOT list every click or navigation — summarize into logical groups.
-- DO present any extracted data (names, emails, phone numbers, statuses) clearly in tables.
-- Keep the entire summary under 250 words.
-- Write in first person as the agent ("I found...", "I opened...").
-- Be confident and professional — you are a capable agent reporting results.`;
+    if (sheetPrompt) {
+      summaryPrompt = sheetPrompt;
+    } else {
+      summaryPrompt = getDefaultWalkthroughPrompt(appName, taskPrompt, logText, agentConclusion, turnsUsed, maxTurns, totalInputTokens, totalOutputTokens);
+    }
+  } else {
+    summaryPrompt = getDefaultWalkthroughPrompt(appName, taskPrompt, logText, agentConclusion, turnsUsed, maxTurns, totalInputTokens, totalOutputTokens);
+  }
 
   try {
     const openai = new OpenAI({ apiKey });
@@ -238,6 +230,44 @@ RULES:
     // AI summary generation is best-effort — don't break the run
     return null;
   }
+}
+
+function getDefaultWalkthroughPrompt(
+  appName: string, taskPrompt: string, logText: string, agentConclusion: string,
+  turnsUsed: number, maxTurns: number, totalInputTokens: number, totalOutputTokens: number,
+): string {
+  return `You are ${appName}, an intelligent browser automation agent. Write a concise executive summary of the task you just completed.
+
+The user gave this instruction:
+"${taskPrompt}"
+
+Here is the activity log:
+${logText}
+
+Agent's conclusion:
+"${agentConclusion}"
+
+Stats: ${turnsUsed}/${maxTurns} turns used, ${totalInputTokens} input tokens, ${totalOutputTokens} output tokens.
+
+Structure as:
+## Mission Brief
+One sentence: what was requested and the outcome.
+
+## Key Findings
+Important data/results discovered. Use tables for structured data.
+
+## Actions Taken
+Short numbered list (max 5) of meaningful steps.
+
+## Recommendations
+1-2 practical next steps.
+
+RULES:
+- No internal details (selectors, exec_js, tokens, turns).
+- Summarize actions into logical groups.
+- Present extracted data in tables.
+- Under 250 words, first person ("I found...").
+- Never include passwords/secrets — replace with ●●●●●●●●.`;
 }
 
 class OpenAIResponsesClient implements ResponsesClient {
@@ -910,7 +940,7 @@ export async function runResponsesCodeLoop(
         turn,
         timestamp: new Date().toISOString(),
         action: `Called function: ${functionCall.name ?? "exec_js"}`,
-        detail: (functionCall.arguments ?? "").slice(0, 200),
+        detail: maskCredentials((functionCall.arguments ?? "").slice(0, 200)),
         url: input.session.page.url(),
         pageTitle: await input.session.page.title().catch(() => undefined),
       });
@@ -960,13 +990,13 @@ export async function runResponsesCodeLoop(
   await notifyWebhook({
     event: "task_completed",
     status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
-    summary: finalAssistantMessage,
+    summary: maskCredentials(finalAssistantMessage),
     model: input.context.detail.run.model,
     totalInputTokens,
     totalOutputTokens,
     turnsUsed: input.maxResponseTurns,
     timestamp: new Date().toISOString(),
-    activityLog,
+    activityLog: activityLog.map(e => ({ ...e, detail: e.detail ? maskCredentials(e.detail) : e.detail })),
   });
 
   // Generate AI walkthrough summary
@@ -1095,7 +1125,7 @@ export async function runResponsesNativeComputerLoop(
           turn,
           timestamp: new Date().toISOString(),
           action: `Browser action: ${actionType}`,
-          detail: actionType === "type" ? `Typed: "${String((action as Record<string, unknown>).text ?? "").slice(0, 100)}"` :
+          detail: actionType === "type" ? `Typed: "${maskCredentials(String((action as Record<string, unknown>).text ?? "").slice(0, 100))}"` :
                   actionType === "click" ? `Clicked at (${(action as Record<string, unknown>).x}, ${(action as Record<string, unknown>).y})` :
                   actionType === "scroll" ? "Scrolled the page" :
                   actionType === "keypress" ? `Pressed ${String((action as Record<string, unknown>).key ?? "key")}` :
@@ -1170,13 +1200,13 @@ export async function runResponsesNativeComputerLoop(
   await notifyWebhook({
     event: "task_completed",
     status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
-    summary: finalAssistantMessage,
+    summary: maskCredentials(finalAssistantMessage),
     model: input.context.detail.run.model,
     totalInputTokens,
     totalOutputTokens,
     turnsUsed: lastTurn,
     timestamp: new Date().toISOString(),
-    activityLog,
+    activityLog: activityLog.map(e => ({ ...e, detail: e.detail ? maskCredentials(e.detail) : e.detail })),
   });
 
   // Generate AI walkthrough summary

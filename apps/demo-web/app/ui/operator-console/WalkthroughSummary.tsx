@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { RunDetail, RunEvent, BrowserScreenshotArtifact } from "@cua-sample/replay-schema";
 import { appName, formatClock } from "./helpers";
+import { maskCredentials } from "./credential-mask";
 
 type WalkthroughSummaryProps = {
   runEvents: RunEvent[];
@@ -139,7 +140,7 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
           </div>
           <div className="summaryPrompt">
             <span className="summaryPromptLabel">Task</span>
-            <p className="summaryPromptText">{run.prompt}</p>
+            <p className="summaryPromptText">{maskCredentials(run.prompt)}</p>
           </div>
         </div>
 
@@ -179,7 +180,7 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
               <span className="summaryAiTitle">{appName}</span>
             </div>
             <div className="summaryAiBody">
-              {renderAiContent(aiSummary)}
+              {renderAiContent(maskCredentials(aiSummary))}
             </div>
           </div>
         ) : isGeneratingAi ? (
@@ -198,7 +199,7 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
         {agentConclusion ? (
           <div className="summarySectionCard">
             <h3 className="summarySectionTitle">💡 Agent Conclusion</h3>
-            <p className="summarySectionText">{agentConclusion}</p>
+            <p className="summarySectionText">{maskCredentials(agentConclusion)}</p>
           </div>
         ) : null}
 
@@ -260,7 +261,7 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
           <span>Started {formatClock(run.startedAt)}</span>
           {run.completedAt ? <span>Finished {formatClock(run.completedAt)}</span> : null}
           {metrics.tokenInfo ? <span>{metrics.tokenInfo}</span> : null}
-          <span>Model: {run.model}</span>
+          <span>Engine: {appName}</span>
         </div>
       </div>
     </div>

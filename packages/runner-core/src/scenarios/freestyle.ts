@@ -45,7 +45,7 @@ class FreestyleCodeExecutor implements RunExecutor {
     const startUrl = normalizeUrl(context.detail.run.startUrl ?? "") || "https://www.google.com";
 
     await context.emitEvent({
-      detail: `model=${context.detail.run.model} url=${startUrl}`,
+      detail: `url=${startUrl}`,
       level: "ok",
       message: "Freestyle agent starting (code mode).",
       type: "run_progress",
@@ -78,7 +78,7 @@ class FreestyleCodeExecutor implements RunExecutor {
       const result = await runResponsesCodeLoop(
         {
           context,
-          instructions: buildFreestyleCodeInstructions(session.page.url()),
+          instructions: await buildFreestyleCodeInstructions(session.page.url()),
           maxResponseTurns: context.detail.run.maxResponseTurns ?? 24,
           prompt: context.detail.run.prompt,
           session,
@@ -124,7 +124,7 @@ class FreestyleNativeExecutor implements RunExecutor {
     const startUrl = normalizeUrl(context.detail.run.startUrl ?? "") || "https://www.google.com";
 
     await context.emitEvent({
-      detail: `model=${context.detail.run.model} url=${startUrl}`,
+      detail: `url=${startUrl}`,
       level: "ok",
       message: "Freestyle agent starting (native mode).",
       type: "run_progress",
@@ -157,7 +157,7 @@ class FreestyleNativeExecutor implements RunExecutor {
       const result = await runResponsesNativeComputerLoop(
         {
           context,
-          instructions: buildFreestyleNativeInstructions(session.page.url()),
+          instructions: await buildFreestyleNativeInstructions(session.page.url()),
           maxResponseTurns: context.detail.run.maxResponseTurns ?? 24,
           prompt: context.detail.run.prompt,
           session,

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { RunEvent } from "@cua-sample/replay-schema";
+import { maskCredentials } from "./credential-mask";
 
 type LogsTabProps = {
   runEvents: RunEvent[];
@@ -45,9 +46,9 @@ export function LogsTab({ runEvents, streamLogs, onStreamLogsChange }: LogsTabPr
                 {ev.level || "INFO"}
               </span>
               <span className="logsMessage">
-                {ev.message || ev.type}
+                {maskCredentials(ev.message || ev.type)}
               </span>
-              {ev.detail ? <span className="logsDetail"> — {ev.detail}</span> : null}
+              {ev.detail ? <span className="logsDetail"> — {maskCredentials(ev.detail)}</span> : null}
             </div>
           ))
         )}

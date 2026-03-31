@@ -4,6 +4,7 @@ import type {
 } from "@cua-sample/replay-schema";
 
 import { formatClock, humanizeToken } from "./formatters";
+import { maskCredentials } from "./credential-mask";
 import type { ActivityItem, LogEntry, TranscriptEntry } from "./types";
 
 /* ── Private helpers ── */
@@ -79,9 +80,77 @@ function summarizeToolCall(label: string, payload: Record<string, unknown>) {
       return "Model is using the browser runtime directly.";
     default:
       return Object.keys(payload).length > 0
-        ? JSON.stringify(payload)
+        ? maskCredentials(JSON.stringify(payload))
         : "Model requested a workspace helper tool.";
   }
+}
+
+/** Parse exec_js code into a human-readable micro-task description */
+function summarizeExecJsCode(code: string): string {
+  if (!code) return "Run browser script";
+
+  const summaries: string[] = [];
+
+  // Page navigation
+  const gotoMatch = code.match(/page\.goto\(['"]([^'"]+)['"]/i);
+  if (gotoMatch) {
+    try {
+      const url = new URL(gotoMatch[1]!);
+      summaries.push(`Navigate to ${url.hostname}${url.pathname === "/" ? "" : url.pathname}`);
+    } catch {
+      summaries.push(`Navigate to ${gotoMatch[1]!.slice(0, 50)}`);
+    }
+  }
+
+  // Clicks
+  if (/page\.(click|getByRole|getByText).*\.click/i.test(code)) {
+    summaries.push("Click element");
+  }
+
+  // Typing
+  if (/page\.keyboard\.type|page\.fill|locator.*\.fill/i.test(code)) {
+    summaries.push("Type text input");
+  }
+
+  // Keyboard press
+  const keyMatch = code.match(/page\.keyboard\.press\(['"]([^'"]+)['"]/i);
+  if (keyMatch) {
+    summaries.push(`Press ${keyMatch[1]}`);
+  }
+
+  // Wait / locator waits
+  if (/waitForLoadState|waitForSelector|waitForTimeout|waitForEvent/i.test(code)) {
+    summaries.push("Wait for page load");
+  }
+
+  // Screenshot
+  if (/screenshot/i.test(code)) {
+    summaries.push("Capture screenshot");
+  }
+
+  // DOM inspection
+  if (/page\.content\(|page\.evaluate|innerText|innerHTML|textContent/i.test(code)) {
+    summaries.push("Extract page data");
+  }
+
+  // console.log
+  if (/console\.log/i.test(code)) {
+    summaries.push("Log output");
+  }
+
+  // Form locators
+  if (/page\.locator|page\.getByRole|page\.getByText|page\.getByLabel|page\.getByPlaceholder/i.test(code)) {
+    if (!summaries.some(s => s.includes("Click"))) {
+      summaries.push("Find element");
+    }
+  }
+
+  // Frame inspection
+  if (/page\.frames\(\)|frameLocator/i.test(code)) {
+    summaries.push("Inspect frames");
+  }
+
+  return summaries.length > 0 ? summaries.join(" → ") : "Run browser script";
 }
 
 function formatCoordinate(xValue: unknown, yValue: unknown) {
@@ -279,12 +348,16 @@ export function mapRunEventToActivity(
             : {}),
         family: "tool",
         headline: parsedPayload
-          ? describeToolCall(parsedPayload.label, parsedPayload.payload)
+          ? (parsedPayload.label === "exec_js" && parsedPayload.code)
+            ? summarizeExecJsCode(parsedPayload.code)
+            : describeToolCall(parsedPayload.label, parsedPayload.payload)
           : "Tool requested",
         key: `activity-${event.id}`,
         level: event.level,
         summary: parsedPayload
-          ? summarizeToolCall(parsedPayload.label, parsedPayload.payload)
+          ? (parsedPayload.label === "exec_js" && parsedPayload.code)
+            ? summarizeExecJsCode(parsedPayload.code)
+            : summarizeToolCall(parsedPayload.label, parsedPayload.payload)
           : event.message,
         time: formatClock(event.createdAt),
       };
@@ -434,7 +507,7 @@ export function mapRunEventToActivity(
         headline: event.message.replace(/\.$/, ""),
         key: `activity-${event.id}`,
         level: event.level,
-        summary: event.detail ?? event.message,
+        summary: event.detail ? maskCredentials(event.detail) : event.message,
         time: formatClock(event.createdAt),
       };
     default:

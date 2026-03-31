@@ -33,6 +33,8 @@ import { getScenarioById } from "@cua-sample/scenario-kit";
 
 import { createDefaultRunExecutor } from "./executor-registry.js";
 import { RunnerCoreError } from "./errors.js";
+import { maskCredentials, sanitizePath } from "./credential-mask.js";
+import { syncPrompts } from "./prompt-store.js";
 import { RunAbortedError, type RunExecutor } from "./scenario-runtime.js";
 
 // ── Webhook helper ──────────────────────────────────────────────────
@@ -113,6 +115,15 @@ export class RunnerManager {
   }
 
   async startRun(input: StartRunRequest): Promise<RunDetail> {
+    // Best-effort sync: fetch latest prompts but don't block if unavailable
+    try {
+      await syncPrompts();
+    } catch (err) {
+      console.warn(
+        `[prompt-store] ⚠️ Prompt sync skipped: ${err instanceof Error ? err.message : String(err)}. Using cached/fallback prompts.`,
+      );
+    }
+
     const request = startRunRequestSchema.parse(input);
     const scenario = getScenarioById(request.scenarioId);
 
@@ -181,13 +192,13 @@ export class RunnerManager {
     await this.persistContext(context);
 
     await this.emitEvent(context, {
-      detail: `${scenario.title} · ${request.mode} · ${request.browserMode ?? "headless"} · ${runRecord.maxResponseTurns ?? defaultMaxResponseTurns} turns`,
+      detail: `${scenario.title} · ${request.mode ?? "code"} · ${request.browserMode ?? "headless"} · ${runRecord.maxResponseTurns ?? defaultMaxResponseTurns} turns`,
       level: "ok",
       message: `Run ${runId} started.`,
       type: "run_started",
     });
     await this.emitEvent(context, {
-      detail: workspacePath,
+      detail: sanitizePath(workspacePath),
       level: "ok",
       message: "Workspace copied into mutable run directory.",
       type: "workspace_prepared",
@@ -644,10 +655,10 @@ export class RunnerManager {
   ) {
     const event = runEventSchema.parse({
       createdAt: this.now().toISOString(),
-      detail: input.detail,
+      detail: input.detail ? maskCredentials(input.detail) : input.detail,
       id: `${context.detail.run.id}:${context.detail.events.length}`,
       level: input.level,
-      message: input.message,
+      message: maskCredentials(input.message),
       runId: context.detail.run.id,
       sequence: context.detail.events.length,
       type: input.type,

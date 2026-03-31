@@ -18,6 +18,8 @@ import {
   RunnerCoreError,
   RunnerManager,
   toRunnerErrorResponse,
+  getPromptSyncStatus,
+  syncPrompts,
 } from "@cua-sample/runner-core";
 import { listScenarios } from "@cua-sample/scenario-kit";
 
@@ -89,7 +91,24 @@ export function createServer(options: CreateServerOptions = {}) {
   app.get("/health", async () => ({
     status: "ok",
     service: "runner",
+    promptSync: getPromptSyncStatus(),
   }));
+
+  app.get("/api/prompts/status", async () => getPromptSyncStatus());
+
+  app.post("/api/prompts/sync", async (_request, reply) => {
+    try {
+      await syncPrompts();
+      return getPromptSyncStatus();
+    } catch (err) {
+      reply.code(503);
+      return {
+        error: "Prompt sync failed",
+        message: err instanceof Error ? err.message : String(err),
+        hint: "Check the Google Sheet and n8n webhook.",
+      };
+    }
+  });
 
   app.get("/api/scenarios", async () =>
     scenariosResponseSchema.parse(listScenarios()),
