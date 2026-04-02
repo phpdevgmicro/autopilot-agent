@@ -96,7 +96,7 @@ export function useRunnerHealth({ runnerBaseUrl, isRunActive }: UseRunnerHealthO
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5_000);
 
-      const response = await fetch(`${runnerBaseUrl}/health`, {
+      const response = await fetch(`${runnerBaseUrl}/api/health`, {
         signal: controller.signal,
       });
       clearTimeout(timeout);

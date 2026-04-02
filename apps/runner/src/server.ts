@@ -90,7 +90,7 @@ export function createServer(options: CreateServerOptions = {}) {
 
   const startedAt = Date.now();
 
-  app.get("/health", async () => {
+  app.get("/api/health", async () => {
     const heartbeat = manager.getHeartbeat();
     const mem = process.memoryUsage();
     return {
