@@ -109,21 +109,122 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
   const isGeneratingAi = isFinished && !aiSummary && run.status === "completed" && run.durationMs !== undefined;
   const notes = run.summary?.notes ?? [];
 
-  /** Render markdown-like AI content */
+  /** Parse markdown-like AI content into styled React elements */
   function renderAiContent(text: string) {
-    return text.split("\n").map((line, i) => {
+    const lines = text.split("\n");
+    const elements: React.ReactNode[] = [];
+    let i = 0;
+
+    while (i < lines.length) {
+      const line = lines[i]!;
+
+      // Skip empty lines
+      if (line.trim() === "") { i++; continue; }
+
+      // ## Headings
       if (line.startsWith("## ")) {
-        return <h4 key={i} className="summaryAiHeading">{line.slice(3)}</h4>;
+        elements.push(<h4 key={i} className="summaryAiHeading">{formatInline(line.slice(3))}</h4>);
+        i++; continue;
       }
+
+      // Tables: detect lines starting with |
+      if (line.trim().startsWith("|")) {
+        const tableLines: string[] = [];
+        while (i < lines.length && lines[i]!.trim().startsWith("|")) {
+          tableLines.push(lines[i]!);
+          i++;
+        }
+        elements.push(renderTable(tableLines, elements.length));
+        continue;
+      }
+
+      // Numbered lists
       if (/^\d+\.\s/.test(line)) {
-        return <p key={i} className="summaryAiStep">{line}</p>;
+        elements.push(<p key={i} className="summaryAiStep">{formatInline(line)}</p>);
+        i++; continue;
       }
+
+      // Bullet lists
       if (line.startsWith("- ")) {
-        return <p key={i} className="summaryAiBullet">{line}</p>;
+        elements.push(<p key={i} className="summaryAiBullet">{formatInline(line)}</p>);
+        i++; continue;
       }
-      if (line.trim() === "") return null;
-      return <p key={i} className="summaryAiText">{line}</p>;
-    });
+
+      // Regular text
+      elements.push(<p key={i} className="summaryAiText">{formatInline(line)}</p>);
+      i++;
+    }
+
+    return elements;
+  }
+
+  /** Convert **bold** and `code` inline markdown to React elements */
+  function formatInline(text: string): React.ReactNode {
+    const parts: React.ReactNode[] = [];
+    // Match **bold** and `code`
+    const regex = /(\*\*(.+?)\*\*|`(.+?)`)/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(text.slice(lastIndex, match.index));
+      }
+      if (match[2]) {
+        parts.push(<strong key={match.index}>{match[2]}</strong>);
+      } else if (match[3]) {
+        parts.push(<code key={match.index} className="summaryInlineCode">{match[3]}</code>);
+      }
+      lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < text.length) {
+      parts.push(text.slice(lastIndex));
+    }
+
+    return parts.length === 1 ? parts[0] : <>{parts}</>;
+  }
+
+  /** Render markdown table lines as an HTML table */
+  function renderTable(tableLines: string[], keyBase: number) {
+    // Parse cells: split by | and trim
+    const rows = tableLines
+      .filter(line => !line.trim().match(/^\|[\s\-:|]+\|$/)) // skip separator row (|---|---|)
+      .map(line =>
+        line.split("|")
+          .slice(1, -1) // remove empty first/last from leading/trailing |
+          .map(cell => cell.trim())
+      );
+
+    if (rows.length === 0) return null;
+
+    const headerRow = rows[0]!;
+    const bodyRows = rows.slice(1);
+
+    return (
+      <div key={`table-${keyBase}`} className="summaryTableWrap">
+        <table className="summaryTable">
+          <thead>
+            <tr>
+              {headerRow.map((cell, ci) => (
+                <th key={ci}>{formatInline(cell)}</th>
+              ))}
+            </tr>
+          </thead>
+          {bodyRows.length > 0 && (
+            <tbody>
+              {bodyRows.map((row, ri) => (
+                <tr key={ri}>
+                  {row.map((cell, ci) => (
+                    <td key={ci}>{formatInline(cell)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          )}
+        </table>
+      </div>
+    );
   }
 
   return (
@@ -199,7 +300,9 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
         {agentConclusion ? (
           <div className="summarySectionCard">
             <h3 className="summarySectionTitle">💡 Agent Conclusion</h3>
-            <p className="summarySectionText">{maskCredentials(agentConclusion)}</p>
+            <div className="summaryAiBody">
+              {renderAiContent(maskCredentials(agentConclusion))}
+            </div>
           </div>
         ) : null}
 

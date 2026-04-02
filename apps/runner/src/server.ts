@@ -88,11 +88,25 @@ export function createServer(options: CreateServerOptions = {}) {
     );
   });
 
-  app.get("/health", async () => ({
-    status: "ok",
-    service: "runner",
-    promptSync: getPromptSyncStatus(),
-  }));
+  const startedAt = Date.now();
+
+  app.get("/health", async () => {
+    const heartbeat = manager.getHeartbeat();
+    const mem = process.memoryUsage();
+    return {
+      status: "ok",
+      service: "runner",
+      uptimeMs: Date.now() - startedAt,
+      activeRunId: heartbeat.activeRunId,
+      lastEventAt: heartbeat.lastEventAt,
+      runStatus: heartbeat.runStatus,
+      memory: {
+        heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+        rssMb: Math.round(mem.rss / 1024 / 1024),
+      },
+      promptSync: getPromptSyncStatus(),
+    };
+  });
 
   app.get("/api/prompts/status", async () => getPromptSyncStatus());
 

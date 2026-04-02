@@ -38,10 +38,20 @@ type MessageItem = {
   type: "message";
 };
 
+type ReasoningItem = {
+  id?: string;
+  summary?: Array<{
+    text?: string;
+    type?: string;
+  }>;
+  type: "reasoning";
+};
+
 type ResponseOutputItem =
   | ComputerCallItem
   | FunctionCallItem
   | MessageItem
+  | ReasoningItem
   | { [key: string]: unknown; type: string };
 
 type ResponsesApiResponse = {
@@ -193,34 +203,33 @@ async function generateAiWalkthrough(
 
   const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Agent";
 
-  let summaryPrompt: string;
-  
-  // Try Google Sheet prompt first, fall back to built-in default
-  if (isPromptStoreSynced()) {
-    const sheetPrompt = getPrompt("walkthrough_summary_prompt", {
-      appName,
-      taskPrompt,
-      logText,
-      agentConclusion,
-      turnsUsed: String(turnsUsed),
-      maxTurns: String(maxTurns),
-      totalInputTokens: String(totalInputTokens),
-      totalOutputTokens: String(totalOutputTokens),
-    });
+  // Google Sheet is the single source of truth — no hardcoded fallbacks
+  if (!isPromptStoreSynced()) {
+    console.warn("[responses-loop] Prompt store not synced — skipping AI summary.");
+    return null;
+  }
 
-    if (sheetPrompt) {
-      summaryPrompt = sheetPrompt;
-    } else {
-      summaryPrompt = getDefaultWalkthroughPrompt(appName, taskPrompt, logText, agentConclusion, turnsUsed, maxTurns, totalInputTokens, totalOutputTokens);
-    }
-  } else {
-    summaryPrompt = getDefaultWalkthroughPrompt(appName, taskPrompt, logText, agentConclusion, turnsUsed, maxTurns, totalInputTokens, totalOutputTokens);
+  const summaryPrompt = getPrompt("walkthrough_summary_prompt", {
+    appName,
+    taskPrompt,
+    logText,
+    agentConclusion,
+    turnsUsed: String(turnsUsed),
+    maxTurns: String(maxTurns),
+    totalInputTokens: String(totalInputTokens),
+    totalOutputTokens: String(totalOutputTokens),
+  });
+
+  if (!summaryPrompt) {
+    console.warn("[responses-loop] Missing 'walkthrough_summary_prompt' in Google Sheet — skipping AI summary.");
+    return null;
   }
 
   try {
     const openai = new OpenAI({ apiKey });
+    const summaryModel = process.env.CUA_SUMMARY_MODEL || "gpt-4o-mini";
     const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: summaryModel,
       messages: [{ role: "user", content: summaryPrompt }],
       max_tokens: 800,
       temperature: 0.3,
@@ -230,44 +239,6 @@ async function generateAiWalkthrough(
     // AI summary generation is best-effort — don't break the run
     return null;
   }
-}
-
-function getDefaultWalkthroughPrompt(
-  appName: string, taskPrompt: string, logText: string, agentConclusion: string,
-  turnsUsed: number, maxTurns: number, totalInputTokens: number, totalOutputTokens: number,
-): string {
-  return `You are ${appName}, an intelligent browser automation agent. Write a concise executive summary of the task you just completed.
-
-The user gave this instruction:
-"${taskPrompt}"
-
-Here is the activity log:
-${logText}
-
-Agent's conclusion:
-"${agentConclusion}"
-
-Stats: ${turnsUsed}/${maxTurns} turns used, ${totalInputTokens} input tokens, ${totalOutputTokens} output tokens.
-
-Structure as:
-## Mission Brief
-One sentence: what was requested and the outcome.
-
-## Key Findings
-Important data/results discovered. Use tables for structured data.
-
-## Actions Taken
-Short numbered list (max 5) of meaningful steps.
-
-## Recommendations
-1-2 practical next steps.
-
-RULES:
-- No internal details (selectors, exec_js, tokens, turns).
-- Summarize actions into logical groups.
-- Present extracted data in tables.
-- Under 250 words, first person ("I found...").
-- Never include passwords/secrets — replace with ●●●●●●●●.`;
 }
 
 class OpenAIResponsesClient implements ResponsesClient {
@@ -447,6 +418,43 @@ function summarizeActions(actions: ComputerAction[]) {
   return actions.map((action) => action.type).join(" -> ") || "no actions";
 }
 
+/** Human-readable description of a single computer action for micro-execution events */
+function describeComputerAction(action: ComputerAction): string {
+  const x = Number(action.x ?? 0);
+  const y = Number(action.y ?? 0);
+  const coord = Number.isFinite(x) && Number.isFinite(y) ? ` @ ${Math.round(x)},${Math.round(y)}` : "";
+
+  switch (action.type) {
+    case "click":
+      return `Click${coord}`;
+    case "double_click":
+      return `Double-click${coord}`;
+    case "drag":
+      return "Drag";
+    case "move":
+      return `Move pointer${coord}`;
+    case "scroll": {
+      const deltaY = Number(action.delta_y ?? action.deltaY ?? action.scroll_y ?? 0);
+      return deltaY !== 0 ? `Scroll ${Math.abs(Math.round(deltaY))}px ${deltaY > 0 ? "down" : "up"}` : "Scroll";
+    }
+    case "type": {
+      const text = String(action.text ?? "");
+      const preview = text.length > 28 ? `${text.slice(0, 25).trimEnd()}...` : text;
+      return preview ? `Type "${preview}"` : "Type text";
+    }
+    case "keypress": {
+      const keys = Array.isArray(action.keys) ? action.keys.map(String) : [String(action.key ?? "")];
+      return keys.length > 0 ? `Press ${keys.join(" + ")}` : "Press key";
+    }
+    case "wait":
+      return "Wait";
+    case "screenshot":
+      return "Capture screenshot";
+    default:
+      return action.type;
+  }
+}
+
 function formatActionBatchDetail(actions: ComputerAction[]) {
   const payload = JSON.stringify(actions);
 
@@ -481,6 +489,40 @@ function isComputerCallItem(item: ResponseOutputItem): item is ComputerCallItem 
   return item.type === "computer_call";
 }
 
+/** Extract the model's reasoning summary text from response output items */
+function extractReasoningSummary(response: ResponsesApiResponse): string | null {
+  const reasoningItems = (response.output ?? []).filter(
+    (item): item is ReasoningItem => item.type === "reasoning",
+  );
+
+  if (reasoningItems.length === 0) return null;
+
+  const summaryTexts = reasoningItems
+    .flatMap((item) => item.summary ?? [])
+    .filter((part) => part.type === "summary_text" && part.text)
+    .map((part) => part.text!.trim())
+    .filter(Boolean);
+
+  return summaryTexts.length > 0 ? summaryTexts.join(" ") : null;
+}
+
+/** Try to extract a readable code snippet from function call arguments JSON */
+function tryExtractCodeSnippet(argsStr: string): string | null {
+  try {
+    const parsed = JSON.parse(argsStr) as Record<string, unknown>;
+    if (typeof parsed.code === "string") {
+      const code = parsed.code.trim();
+      // Show first 3 lines or 200 chars, whichever is shorter
+      const lines = code.split("\n").slice(0, 3);
+      const preview = lines.join("\n");
+      return preview.length > 200 ? `${preview.slice(0, 197)}...` : preview;
+    }
+  } catch {
+    // Not valid JSON, return null
+  }
+  return null;
+}
+
 async function emitModelTurnEvent(
   context: RunExecutionContext,
   response: ResponsesApiResponse,
@@ -492,6 +534,52 @@ async function emitModelTurnEvent(
     message: `Responses API turn ${turn} completed.`,
     type: "run_progress",
   });
+
+  // Emit reasoning summary (model's thought process)
+  const reasoningSummary = extractReasoningSummary(response);
+  if (reasoningSummary) {
+    await context.emitEvent({
+      detail: reasoningSummary,
+      level: "ok",
+      message: `🧠 Model reasoning (turn ${turn})`,
+      type: "run_progress",
+    });
+  }
+
+  // Emit intermediate assistant text messages
+  const intermediateText = extractAssistantMessageText(response);
+  if (intermediateText && intermediateText.length > 0) {
+    await context.emitEvent({
+      detail: intermediateText.length > 500 ? `${intermediateText.slice(0, 497)}...` : intermediateText,
+      level: "ok",
+      message: `💬 Model response text (turn ${turn})`,
+      type: "run_progress",
+    });
+  }
+
+  // Emit output item details (function calls, computer calls)
+  for (const item of response.output ?? []) {
+    if (item.type === "function_call") {
+      const fc = item as FunctionCallItem;
+      const argsPreview = fc.arguments ? maskCredentials(fc.arguments.slice(0, 300)) : "";
+      const codeSnippet = tryExtractCodeSnippet(argsPreview);
+      await context.emitEvent({
+        detail: codeSnippet || argsPreview || "(no arguments)",
+        level: "pending",
+        message: `🔧 Tool call: ${fc.name ?? "function"}`,
+        type: "run_progress",
+      });
+    } else if (item.type === "computer_call") {
+      const cc = item as ComputerCallItem;
+      const actionSummary = (cc.actions ?? []).map(a => describeComputerAction(a)).join(" → ");
+      await context.emitEvent({
+        detail: actionSummary || "(no actions)",
+        level: "pending",
+        message: `🖱️ Browser plan (turn ${turn})`,
+        type: "run_progress",
+      });
+    }
+  }
 }
 
 function buildCodeToolDefinitions() {
@@ -897,9 +985,19 @@ export async function runResponsesCodeLoop(
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   const activityLog: ActivityLogEntry[] = [];
+  const startTime = Date.now();
 
   for (let turn = 1; turn <= input.maxResponseTurns; turn += 1) {
     assertActive(input.context.signal);
+
+    // Micro-event: signal that we're waiting for the model
+    await input.context.emitEvent({
+      detail: `Turn ${turn}/${input.maxResponseTurns} · Awaiting model response...`,
+      level: "pending",
+      message: `Sending request to model (turn ${turn})...`,
+      type: "run_progress",
+    });
+
     const response = await withRetry(() =>
       client.create(
         {
@@ -908,7 +1006,7 @@ export async function runResponsesCodeLoop(
           model: input.context.detail.run.model,
           parallel_tool_calls: false,
           previous_response_id: previousResponseId,
-          reasoning: { effort: defaultReasoningEffort },
+          reasoning: { effort: defaultReasoningEffort, summary: "concise" },
           tools: buildCodeToolDefinitions(),
         },
         input.context.signal,
@@ -987,19 +1085,7 @@ export async function runResponsesCodeLoop(
     type: "run_progress",
   });
 
-  await notifyWebhook({
-    event: "task_completed",
-    status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
-    summary: maskCredentials(finalAssistantMessage),
-    model: input.context.detail.run.model,
-    totalInputTokens,
-    totalOutputTokens,
-    turnsUsed: input.maxResponseTurns,
-    timestamp: new Date().toISOString(),
-    activityLog: activityLog.map(e => ({ ...e, detail: e.detail ? maskCredentials(e.detail) : e.detail })),
-  });
-
-  // Generate AI walkthrough summary
+  // Generate AI walkthrough summary FIRST (before webhook)
   const aiWalkthrough = await generateAiWalkthrough(
     activityLog,
     input.context.detail.run.prompt,
@@ -1019,6 +1105,25 @@ export async function runResponsesCodeLoop(
       type: "ai_walkthrough_generated",
     });
   }
+
+  // Send webhook WITH walkthrough (after it's generated)
+  await notifyWebhook({
+    event: "task_completed",
+    status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
+    taskPrompt: maskCredentials(input.context.detail.run.prompt),
+    targetUrl: (input.context.detail.scenario?.startTarget as { url?: string })?.url ?? "",
+    executionMode: "code",
+    rawResponse: maskCredentials(finalAssistantMessage),
+    aiWalkthrough: aiWalkthrough ?? "",
+    model: input.context.detail.run.model,
+    totalInputTokens,
+    totalOutputTokens,
+    turnsUsed: activityLog.length,
+    maxTurns: input.maxResponseTurns,
+    durationMs: Date.now() - startTime,
+    timestamp: new Date().toISOString(),
+    activityLog: activityLog.map(e => ({ ...e, detail: e.detail ? maskCredentials(e.detail) : e.detail })),
+  });
 
   return {
     finalAssistantMessage,
@@ -1057,10 +1162,20 @@ export async function runResponsesNativeComputerLoop(
   let totalOutputTokens = 0;
   let lastTurn = 0;
   const activityLog: ActivityLogEntry[] = [];
+  const startTime = Date.now();
 
   for (let turn = 1; turn <= input.maxResponseTurns; turn += 1) {
     lastTurn = turn;
     assertActive(input.context.signal);
+
+    // Micro-event: signal that we're waiting for the model
+    await input.context.emitEvent({
+      detail: `Turn ${turn}/${input.maxResponseTurns} · Awaiting model response...`,
+      level: "pending",
+      message: `Sending request to model (turn ${turn})...`,
+      type: "run_progress",
+    });
+
     const response = await withRetry(() =>
       client.create(
         {
@@ -1143,7 +1258,16 @@ export async function runResponsesNativeComputerLoop(
         type: "computer_call_requested",
       });
 
-      for (const action of actions) {
+      for (let ai = 0; ai < actions.length; ai++) {
+        const action = actions[ai]!;
+        const actionDesc = describeComputerAction(action);
+        // Micro-event: per-action progress
+        await input.context.emitEvent({
+          detail: `Action ${ai + 1}/${actions.length}: ${actionDesc}`,
+          level: "pending",
+          message: `Executing: ${actionDesc}`,
+          type: "run_progress",
+        });
         await executeComputerAction(input, action);
       }
 
@@ -1197,19 +1321,7 @@ export async function runResponsesNativeComputerLoop(
     type: "run_progress",
   });
 
-  await notifyWebhook({
-    event: "task_completed",
-    status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
-    summary: maskCredentials(finalAssistantMessage),
-    model: input.context.detail.run.model,
-    totalInputTokens,
-    totalOutputTokens,
-    turnsUsed: lastTurn,
-    timestamp: new Date().toISOString(),
-    activityLog: activityLog.map(e => ({ ...e, detail: e.detail ? maskCredentials(e.detail) : e.detail })),
-  });
-
-  // Generate AI walkthrough summary
+  // Generate AI walkthrough summary FIRST (before webhook)
   const aiWalkthrough = await generateAiWalkthrough(
     activityLog,
     input.context.detail.run.prompt,
@@ -1229,6 +1341,25 @@ export async function runResponsesNativeComputerLoop(
       type: "ai_walkthrough_generated",
     });
   }
+
+  // Send webhook WITH walkthrough (after it's generated)
+  await notifyWebhook({
+    event: "task_completed",
+    status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
+    taskPrompt: maskCredentials(input.context.detail.run.prompt),
+    targetUrl: (input.context.detail.scenario?.startTarget as { url?: string })?.url ?? "",
+    executionMode: "native",
+    rawResponse: maskCredentials(finalAssistantMessage),
+    aiWalkthrough: aiWalkthrough ?? "",
+    model: input.context.detail.run.model,
+    totalInputTokens,
+    totalOutputTokens,
+    turnsUsed: lastTurn,
+    maxTurns: input.maxResponseTurns,
+    durationMs: Date.now() - startTime,
+    timestamp: new Date().toISOString(),
+    activityLog: activityLog.map(e => ({ ...e, detail: e.detail ? maskCredentials(e.detail) : e.detail })),
+  });
 
   return {
     finalAssistantMessage,

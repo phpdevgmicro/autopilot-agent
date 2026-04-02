@@ -2,17 +2,17 @@
 
 import { useState, useEffect } from "react";
 import { formatClock, formatRunnerIssueMessage, scenarioTargetDisplay } from "./helpers";
-import { ActivityFeed } from "./ActivityFeed";
 import { IconMonitor, IconActivity, IconBarChart, IconCheckCircle } from "./Icons";
 import { RunControls, RunActionButtons } from "./RunControls";
 import { ConsoleTopbar } from "./RunSummary";
 import { ScreenshotPane } from "./ScreenshotPane";
 import { WalkthroughSummary } from "./WalkthroughSummary";
+import { NotificationToast } from "./NotificationToast";
 import type { OperatorConsoleProps } from "./types";
 import { useRunStream } from "./useRunStream";
 import { LogsTab } from "./LogsTab";
 
-type StageTab = "browser" | "activity" | "summary" | "logs";
+type StageTab = "browser" | "summary" | "logs";
 
 export function OperatorConsole({
   initialRunnerIssue,
@@ -54,12 +54,20 @@ export function OperatorConsole({
     startUrl,
     streamLogs,
     viewingLiveFrame,
+    healthStatus,
+    activeNotifications,
+    dismissNotification,
   } = useRunStream({
     initialRunnerIssue,
     runnerBaseUrl,
     scenarios,
   });
 
+  // Health monitoring
+  const healthBadgeClass =
+    healthStatus === "healthy" ? "healthBadgeHealthy" :
+    healthStatus === "degraded" ? "healthBadgeDegraded" :
+    "healthBadgeDead";
   const selectedScenarioTitle = selectedScenario?.title ?? "Autonomous Agent";
   const stageUrl =
     selectedBrowser?.currentUrl ??
@@ -159,12 +167,26 @@ export function OperatorConsole({
 
   return (
     <main className="consoleShell">
+      {/* Health notification toasts */}
+      <NotificationToast
+        notifications={activeNotifications}
+        onDismiss={dismissNotification}
+      />
+
       <section className="consoleFrame">
-        <ConsoleTopbar
-          runnerBaseUrl={runnerBaseUrl}
-          runnerOnline={runnerOnline}
-          stageHeadline={stageHeadline}
-        />
+        <div className="topbarWithHealth">
+          <ConsoleTopbar
+            runnerBaseUrl={runnerBaseUrl}
+            runnerOnline={runnerOnline}
+            stageHeadline={stageHeadline}
+          />
+          <div className={`healthBadge ${healthBadgeClass}`}>
+            <span className="healthBadgeDot" />
+            <span className="healthBadgeLabel">
+              {healthStatus === "healthy" ? "Online" : healthStatus === "degraded" ? "Degraded" : "Offline"}
+            </span>
+          </div>
+        </div>
 
         <section className="benchTop">
           <section className="controlColumn">
@@ -201,15 +223,15 @@ export function OperatorConsole({
                     ) : null}
                   </button>
 
-                  {/* Tab 2: Activity — real-time event stream */}
+                  {/* Tab 2: Mission Log — terminal execution log */}
                   <button
-                    className={`stageTab ${activeTab === "activity" ? "active" : ""}`}
-                    onClick={() => setActiveTab("activity")}
+                    className={`stageTab ${activeTab === "logs" ? "active" : ""}`}
+                    onClick={() => setActiveTab("logs")}
                     type="button"
                   >
-                    <IconActivity size={14} /> Live Feed
-                    {activityItems.length > 0 ? (
-                      <span className="stageTabBadge">{activityItems.length}</span>
+                    <IconActivity size={14} /> Mission Log
+                    {runEvents.length > 0 ? (
+                      <span className="stageTabBadge">{runEvents.length}</span>
                     ) : null}
                   </button>
 
@@ -224,15 +246,6 @@ export function OperatorConsole({
                     {isRunFinished ? (
                       <span className="stageTabBadge stageTabBadgeGreen"><IconCheckCircle size={10} /></span>
                     ) : null}
-                  </button>
-
-                  {/* Tab 4: Logs — Raw stream debugging */}
-                  <button
-                    className={`stageTab ${activeTab === "logs" ? "active" : ""}`}
-                    onClick={() => setActiveTab("logs")}
-                    type="button"
-                  >
-                    <IconActivity size={14} /> Logs
                   </button>
                 </div>
                 <RunActionButtons
@@ -267,24 +280,6 @@ export function OperatorConsole({
                 stageUrl={stageUrl}
                 viewingLiveFrame={viewingLiveFrame}
               />
-            ) : activeTab === "activity" ? (
-              <div className="stageActivityPanel">
-                <ActivityFeed
-                  activityFeedLabel={activityFeedLabel}
-                  activityFeedRef={activityFeedRef}
-                  activityItems={activityItems}
-                  followActivityFeed={followActivityFeed}
-                  onActivityFeedScroll={handleActivityFeedScroll}
-                  onJumpToLatestActivity={handleJumpToLatestActivity}
-                  onSelectScreenshot={(screenshotId) => {
-                    handleSelectScreenshot(screenshotId);
-                    setActiveTab("browser");
-                  }}
-                  onStreamLogsChange={setStreamLogs}
-                  screenshots={screenshots}
-                  streamLogs={streamLogs}
-                />
-              </div>
             ) : activeTab === "summary" && isRunFinished ? (
               <WalkthroughSummary
                 runEvents={runEvents}

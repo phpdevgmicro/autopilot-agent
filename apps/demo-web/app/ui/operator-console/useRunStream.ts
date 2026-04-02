@@ -11,6 +11,7 @@ import { useScenarios } from "./useScenarios";
 import { useRunLifecycle } from "./useRunLifecycle";
 import { useScreenshots } from "./useScreenshots";
 import { useActivityFeed } from "./useActivityFeed";
+import { useRunnerHealth } from "./useRunnerHealth";
 
 import type { RunnerIssue } from "./types";
 import type { ScenarioManifest } from "@cua-sample/replay-schema";
@@ -58,6 +59,13 @@ export function useRunStream({
     lifecycleHook.streamLogs,
     lifecycleHook.selectedRun?.run.status,
   );
+
+  /* ── 5. Runner health monitoring ── */
+  const isRunActive = lifecycleHook.selectedRun?.run.status === "running";
+  const healthHook = useRunnerHealth({
+    runnerBaseUrl,
+    isRunActive: !!isRunActive,
+  });
 
   /* ── Scenario change handler (bridges scenario + lifecycle) ── */
   const handleScenarioChange = (scenarioId: string) => {
@@ -113,5 +121,10 @@ export function useRunStream({
     // Stream
     setStreamLogs: lifecycleHook.setStreamLogs,
     streamLogs: lifecycleHook.streamLogs,
+
+    // Health monitoring
+    healthStatus: healthHook.healthStatus,
+    activeNotifications: healthHook.activeNotifications,
+    dismissNotification: healthHook.dismissNotification,
   };
 }

@@ -92,6 +92,11 @@ const defaultMaxResponseTurns = Number(process.env.CUA_MAX_RESPONSE_TURNS ?? "24
 const defaultBrowserMode = (process.env.CUA_BROWSER_MODE ?? "headless") as "headless" | "headful";
 const defaultExecutionMode = (process.env.CUA_EXECUTION_MODE ?? "native") as "code" | "native";
 
+/** Stall detection: warn after 60s, auto-abort after 120s of no events */
+const STALL_WARNING_MS = Number(process.env.CUA_STALL_WARNING_MS ?? "60000");
+const STALL_ABORT_MS = Number(process.env.CUA_STALL_ABORT_MS ?? "120000");
+const STALL_CHECK_INTERVAL_MS = 10_000;
+
 function sleep(ms: number) {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
 }
@@ -106,12 +111,99 @@ export class RunnerManager {
   private readonly scenarioWorkspaceStates = new Map<string, ScenarioWorkspaceState>();
   private readonly stepDelayMs: number;
 
+  /** Heartbeat tracking for client-side health monitoring */
+  private lastEventAt: string | null = null;
+  private stallWarningEmitted = false;
+  private readonly stallWatchdogHandle: ReturnType<typeof setInterval>;
+
   constructor(options: RunnerManagerOptions) {
     this.dataRoot = resolve(options.dataRoot);
     this.executorFactory = options.executorFactory ?? createDefaultRunExecutor;
     this.idGenerator = options.idGenerator ?? randomUUID;
     this.now = options.now ?? (() => new Date());
     this.stepDelayMs = options.stepDelayMs ?? defaultStepDelayMs;
+
+    // Start stall watchdog — checks every 10s if an active run has gone silent
+    this.stallWatchdogHandle = setInterval(() => {
+      void this.checkForStalledRuns();
+    }, STALL_CHECK_INTERVAL_MS);
+    // Don't let the watchdog keep the process alive
+    if (this.stallWatchdogHandle.unref) {
+      this.stallWatchdogHandle.unref();
+    }
+  }
+
+  /** Returns heartbeat data for the /health endpoint */
+  getHeartbeat() {
+    const activeRun = this.getActiveRun();
+    return {
+      activeRunId: activeRun?.detail.run.id ?? null,
+      lastEventAt: this.lastEventAt,
+      runStatus: activeRun?.detail.run.status ?? null,
+    };
+  }
+
+  /** Stall detection: auto-abort runs stuck for too long */
+  private async checkForStalledRuns() {
+    if (!this.lastEventAt) return;
+
+    const activeRun = this.getActiveRun();
+    if (!activeRun || activeRun.detail.run.status !== "running") {
+      this.stallWarningEmitted = false;
+      return;
+    }
+
+    const silentMs = Date.now() - new Date(this.lastEventAt).getTime();
+
+    // Emit warning at 60s
+    if (silentMs >= STALL_WARNING_MS && !this.stallWarningEmitted) {
+      this.stallWarningEmitted = true;
+      await this.emitEvent(activeRun, {
+        detail: `No activity for ${Math.round(silentMs / 1000)}s. The agent may be stuck.`,
+        level: "warn",
+        message: "Agent appears stalled — no events received.",
+        type: "run_progress",
+      });
+    }
+
+    // Auto-abort at 120s
+    if (silentMs >= STALL_ABORT_MS) {
+      console.error(
+        JSON.stringify({
+          level: "error",
+          event: "stall_auto_abort",
+          runId: activeRun.detail.run.id,
+          silentMs,
+          timestamp: new Date().toISOString(),
+        }),
+      );
+
+      // Notify webhook
+      void notifyWebhookFromManager({
+        event: "task_completed",
+        status: "timeout",
+        taskPrompt: maskCredentials(activeRun.detail.run.prompt),
+        targetUrl: (activeRun.detail.scenario?.startTarget as { url?: string })?.url ?? "",
+        executionMode: activeRun.detail.run.mode,
+        rawResponse: `Agent stalled for ${Math.round(silentMs / 1000)}s with no activity. Auto-aborted.`,
+        aiWalkthrough: "",
+        summary: `Agent stalled for ${Math.round(silentMs / 1000)}s with no activity. Auto-aborted.`,
+        model: activeRun.detail.run.model,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        turnsUsed: activeRun.detail.events.length,
+        maxTurns: activeRun.detail.run.maxResponseTurns ?? defaultMaxResponseTurns,
+        durationMs: Date.now() - new Date(activeRun.detail.run.startedAt).getTime(),
+        timestamp: new Date().toISOString(),
+        activityLog: [],
+      });
+
+      await this.stopRun(
+        activeRun.detail.run.id,
+        `Auto-aborted: agent stalled for ${Math.round(silentMs / 1000)}s with no activity.`,
+      );
+      this.stallWarningEmitted = false;
+    }
   }
 
   async startRun(input: StartRunRequest): Promise<RunDetail> {
@@ -294,11 +386,18 @@ export class RunnerManager {
     void notifyWebhookFromManager({
       event: "task_completed",
       status: "cancelled",
+      taskPrompt: maskCredentials(context.detail.run.prompt),
+      targetUrl: (context.detail.scenario?.startTarget as { url?: string })?.url ?? "",
+      executionMode: context.detail.run.mode,
+      rawResponse: reason,
+      aiWalkthrough: "",
       summary: reason,
       model: context.detail.run.model,
       totalInputTokens: 0,
       totalOutputTokens: 0,
       turnsUsed: context.detail.events.length,
+      maxTurns: context.detail.run.maxResponseTurns ?? defaultMaxResponseTurns,
+      durationMs: Date.now() - new Date(context.detail.run.startedAt).getTime(),
       timestamp: new Date().toISOString(),
       activityLog: [],
     });
@@ -572,11 +671,18 @@ export class RunnerManager {
     void notifyWebhookFromManager({
       event: "task_completed",
       status: "failed",
+      taskPrompt: maskCredentials(context.detail.run.prompt),
+      targetUrl: (context.detail.scenario?.startTarget as { url?: string })?.url ?? "",
+      executionMode: context.detail.run.mode,
+      rawResponse: `Error: ${message}${runnerError?.hint ? ` | Hint: ${runnerError.hint}` : ""}`,
+      aiWalkthrough: "",
       summary: `Error: ${message}${runnerError?.hint ? ` | Hint: ${runnerError.hint}` : ""}`,
       model: context.detail.run.model,
       totalInputTokens: 0,
       totalOutputTokens: 0,
       turnsUsed: context.detail.events.length,
+      maxTurns: context.detail.run.maxResponseTurns ?? defaultMaxResponseTurns,
+      durationMs: Date.now() - new Date(context.detail.run.startedAt).getTime(),
       timestamp: new Date().toISOString(),
       activityLog: [],
     });
@@ -653,8 +759,12 @@ export class RunnerManager {
       type: RunEventType;
     },
   ) {
+    const createdAt = this.now().toISOString();
+    this.lastEventAt = createdAt;
+    this.stallWarningEmitted = false; // Reset stall warning on any event
+
     const event = runEventSchema.parse({
-      createdAt: this.now().toISOString(),
+      createdAt,
       detail: input.detail ? maskCredentials(input.detail) : input.detail,
       id: `${context.detail.run.id}:${context.detail.events.length}`,
       level: input.level,
