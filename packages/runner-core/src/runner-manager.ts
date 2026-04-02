@@ -34,7 +34,7 @@ import { getScenarioById } from "@cua-sample/scenario-kit";
 import { createDefaultRunExecutor } from "./executor-registry.js";
 import { RunnerCoreError } from "./errors.js";
 import { maskCredentials, sanitizePath } from "./credential-mask.js";
-import { syncPrompts } from "./prompt-store.js";
+import { syncPrompts, getPromptSyncStatus } from "./prompt-store.js";
 import { RunAbortedError, type RunExecutor } from "./scenario-runtime.js";
 
 // ── Webhook helper ──────────────────────────────────────────────────
@@ -284,6 +284,24 @@ export class RunnerManager {
       message: "Workspace copied into mutable run directory.",
       type: "workspace_prepared",
     });
+
+    // Show prompt sync status in the UI mission log
+    const syncStatus = getPromptSyncStatus();
+    if (syncStatus.synced) {
+      await this.emitEvent(context, {
+        detail: `Agent is ready with latest instructions.`,
+        level: "ok",
+        message: "📋 Instructions loaded.",
+        type: "run_progress",
+      });
+    } else {
+      await this.emitEvent(context, {
+        detail: `Could not fetch latest instructions — using previously cached version.`,
+        level: "warn",
+        message: "⚠️ Using cached instructions.",
+        type: "run_progress",
+      });
+    }
 
     void this.executeRun(context);
 

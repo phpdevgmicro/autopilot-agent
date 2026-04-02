@@ -267,8 +267,7 @@ async function generateAiWalkthrough(
     const response = await openai.chat.completions.create({
       model: summaryModel,
       messages: [{ role: "user", content: finalPrompt }],
-      max_tokens: 800,
-      temperature: 0.3,
+      max_completion_tokens: 800,
     });
     const summary = response.choices?.[0]?.message?.content ?? null;
     if (summary) {
@@ -1133,6 +1132,13 @@ export async function runResponsesCodeLoop(
   });
 
   // Generate AI walkthrough summary FIRST (before webhook)
+  await input.context.emitEvent({
+    detail: `Analyzing task activity and preparing a summary...`,
+    level: "ok",
+    message: "\ud83d\udcdd Writing mission summary...",
+    type: "run_progress",
+  });
+
   const aiWalkthrough = await generateAiWalkthrough(
     activityLog,
     input.context.detail.run.prompt,
