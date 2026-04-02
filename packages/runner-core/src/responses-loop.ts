@@ -109,7 +109,7 @@ type ResponsesLoopResult = {
 
 const defaultInterActionDelayMs = Number(process.env.CUA_INTER_ACTION_DELAY_MS ?? "120");
 const toolExecutionTimeoutMs = Number(process.env.CUA_TOOL_TIMEOUT_MS ?? "20000");
-const defaultReasoningEffort = (process.env.CUA_REASONING_EFFORT ?? "medium") as "low" | "medium" | "high";
+const defaultReasoningEffort = (process.env.CUA_REASONING_EFFORT ?? "low") as "low" | "medium" | "high";
 const webhookUrl = process.env.CUA_WEBHOOK_URL?.trim() || null;
 
 /**
@@ -160,6 +160,21 @@ async function notifyWebhook(payload: Record<string, unknown>) {
 }
 
 /**
+ * Strip markdown formatting so text looks clean in Google Sheets.
+ * Removes: **bold**, *italic*, ## headings, `code`, [links](url)
+ */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")   // **bold** → bold
+    .replace(/\*(.+?)\*/g, "$1")       // *italic* → italic
+    .replace(/^#{1,6}\s+/gm, "")       // ## Heading → Heading
+    .replace(/`([^`]+)`/g, "$1")       // `code` → code
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")  // [text](url) → text
+    .replace(/^[\-\*]\s+/gm, "• ")     // - item → • item
+    .trim();
+}
+
+/**
  * Structured activity log entry for tracking what the agent did.
  */
 type ActivityLogEntry = {
@@ -205,7 +220,7 @@ async function generateAiWalkthrough(
 
   // Google Sheet is the single source of truth — no hardcoded fallbacks
   if (!isPromptStoreSynced()) {
-    console.warn("[responses-loop] Prompt store not synced — skipping AI summary.");
+    console.warn(`  ⚠️  ${appName} — Prompt store not synced, skipping summary generation`);
     return null;
   }
 
@@ -221,22 +236,51 @@ async function generateAiWalkthrough(
   });
 
   if (!summaryPrompt) {
-    console.warn("[responses-loop] Missing 'walkthrough_summary_prompt' in Google Sheet — skipping AI summary.");
+    console.warn(`  ⚠️  ${appName} — Missing 'walkthrough_summary_prompt' in Sheet, skipping summary`);
     return null;
   }
+
+  // Auto-append task context so the summary model always has the data,
+  // even if the Sheet prompt doesn't include {{variable}} placeholders
+  const autoContext = [
+    "",
+    "--- TASK DATA (auto-injected) ---",
+    `Task: ${taskPrompt}`,
+    `Agent conclusion: ${agentConclusion}`,
+    `Turns: ${turnsUsed}/${maxTurns}`,
+    `Tokens: ${totalInputTokens} in / ${totalOutputTokens} out`,
+    "",
+    "Activity log:",
+    logText,
+  ].join("\n");
+
+  // Only append if the prompt doesn't already contain these via {{variables}}
+  const hasVariables = summaryPrompt.includes(taskPrompt) && summaryPrompt.includes(logText);
+  const finalPrompt = hasVariables ? summaryPrompt : summaryPrompt + autoContext;
 
   try {
     const openai = new OpenAI({ apiKey });
     const summaryModel = process.env.CUA_SUMMARY_MODEL || "gpt-4o-mini";
+    console.log(``);
+    console.log(`  📝 ${appName} — Writing mission summary...`);
+    console.log(`     🧠 Model: ${summaryModel} | Log entries: ${activityLog.length}`);
     const response = await openai.chat.completions.create({
       model: summaryModel,
-      messages: [{ role: "user", content: summaryPrompt }],
+      messages: [{ role: "user", content: finalPrompt }],
       max_tokens: 800,
       temperature: 0.3,
     });
-    return response.choices?.[0]?.message?.content ?? null;
-  } catch {
-    // AI summary generation is best-effort — don't break the run
+    const summary = response.choices?.[0]?.message?.content ?? null;
+    if (summary) {
+      console.log(`  ✅ ${appName} — Summary generated (${summary.length} chars)`);
+    } else {
+      console.warn(`  ⚠️  ${appName} — Summary model returned empty response`);
+    }
+    console.log(``);
+    return summary;
+  } catch (err) {
+    console.error(`  ❌ ${appName} — Summary generation failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.log(``);
     return null;
   }
 }
@@ -598,7 +642,10 @@ function buildCodeToolDefinitions() {
               "JavaScript to execute in an async Playwright REPL.",
               "Persist state across calls with globalThis.",
               "Available globals: console.log, display(base64Image), Buffer, browser, context, page.",
-              "Prefer locator-based waits and domcontentloaded load-state waits over fixed delays.",
+              "Use console.log() to read values back. Keep output minimal — avoid logging large payloads.",
+              "Use display(base64) to send screenshots/images back. Do NOT write images to disk.",
+              "Prefer locator-based waits (waitForSelector, waitForLoadState) over fixed delays.",
+              "Do not assume any packages or globals beyond those listed above.",
             ].join("\n"),
             type: "string",
           },
@@ -1097,32 +1144,26 @@ export async function runResponsesCodeLoop(
     input.maxResponseTurns,
   );
 
-  if (aiWalkthrough) {
-    await input.context.emitEvent({
-      detail: aiWalkthrough,
-      level: "ok",
-      message: "AI-generated task walkthrough.",
-      type: "ai_walkthrough_generated",
-    });
-  }
+  // Always emit walkthrough event so the UI never stays stuck on "generating summary..."
+  const walkthroughText = aiWalkthrough || finalAssistantMessage;
+  await input.context.emitEvent({
+    detail: walkthroughText,
+    level: "ok",
+    message: aiWalkthrough
+      ? "AI-generated task walkthrough."
+      : "AI summary unavailable — showing agent conclusion.",
+    type: "ai_walkthrough_generated",
+  });
 
   // Send webhook WITH walkthrough (after it's generated)
+  // Only send fields that the n8n "CUA Task Logger" maps to Google Sheet columns:
+  // Summary | Task Prompt | Timestamp | Status | Duration (s)
   await notifyWebhook({
-    event: "task_completed",
     status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
     taskPrompt: maskCredentials(input.context.detail.run.prompt),
-    targetUrl: (input.context.detail.scenario?.startTarget as { url?: string })?.url ?? "",
-    executionMode: "code",
-    rawResponse: maskCredentials(finalAssistantMessage),
-    aiWalkthrough: aiWalkthrough ?? "",
-    model: input.context.detail.run.model,
-    totalInputTokens,
-    totalOutputTokens,
-    turnsUsed: activityLog.length,
-    maxTurns: input.maxResponseTurns,
+    aiWalkthrough: aiWalkthrough ? stripMarkdown(aiWalkthrough) : maskCredentials(finalAssistantMessage),
     durationMs: Date.now() - startTime,
     timestamp: new Date().toISOString(),
-    activityLog: activityLog.map(e => ({ ...e, detail: e.detail ? maskCredentials(e.detail) : e.detail })),
   });
 
   return {
@@ -1333,32 +1374,24 @@ export async function runResponsesNativeComputerLoop(
     input.maxResponseTurns,
   );
 
-  if (aiWalkthrough) {
-    await input.context.emitEvent({
-      detail: aiWalkthrough,
-      level: "ok",
-      message: "AI-generated task walkthrough.",
-      type: "ai_walkthrough_generated",
-    });
-  }
+  // Always emit walkthrough event so the UI never stays stuck on "generating summary..."
+  const nativeWalkthroughText = aiWalkthrough || finalAssistantMessage;
+  await input.context.emitEvent({
+    detail: nativeWalkthroughText,
+    level: "ok",
+    message: aiWalkthrough
+      ? "AI-generated task walkthrough."
+      : "AI summary unavailable — showing agent conclusion.",
+    type: "ai_walkthrough_generated",
+  });
 
   // Send webhook WITH walkthrough (after it's generated)
   await notifyWebhook({
-    event: "task_completed",
     status: finalAssistantMessage.startsWith("Task partially") ? "partial" : "success",
     taskPrompt: maskCredentials(input.context.detail.run.prompt),
-    targetUrl: (input.context.detail.scenario?.startTarget as { url?: string })?.url ?? "",
-    executionMode: "native",
-    rawResponse: maskCredentials(finalAssistantMessage),
-    aiWalkthrough: aiWalkthrough ?? "",
-    model: input.context.detail.run.model,
-    totalInputTokens,
-    totalOutputTokens,
-    turnsUsed: lastTurn,
-    maxTurns: input.maxResponseTurns,
+    aiWalkthrough: aiWalkthrough ? stripMarkdown(aiWalkthrough) : maskCredentials(finalAssistantMessage),
     durationMs: Date.now() - startTime,
     timestamp: new Date().toISOString(),
-    activityLog: activityLog.map(e => ({ ...e, detail: e.detail ? maskCredentials(e.detail) : e.detail })),
   });
 
   return {

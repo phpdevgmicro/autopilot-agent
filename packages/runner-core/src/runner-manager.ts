@@ -178,24 +178,13 @@ export class RunnerManager {
         }),
       );
 
-      // Notify webhook
+      // Notify webhook — only fields the Sheet needs
       void notifyWebhookFromManager({
-        event: "task_completed",
         status: "timeout",
         taskPrompt: maskCredentials(activeRun.detail.run.prompt),
-        targetUrl: (activeRun.detail.scenario?.startTarget as { url?: string })?.url ?? "",
-        executionMode: activeRun.detail.run.mode,
-        rawResponse: `Agent stalled for ${Math.round(silentMs / 1000)}s with no activity. Auto-aborted.`,
-        aiWalkthrough: "",
-        summary: `Agent stalled for ${Math.round(silentMs / 1000)}s with no activity. Auto-aborted.`,
-        model: activeRun.detail.run.model,
-        totalInputTokens: 0,
-        totalOutputTokens: 0,
-        turnsUsed: activeRun.detail.events.length,
-        maxTurns: activeRun.detail.run.maxResponseTurns ?? defaultMaxResponseTurns,
+        aiWalkthrough: `Agent stalled for ${Math.round(silentMs / 1000)}s with no activity. Auto-aborted.`,
         durationMs: Date.now() - new Date(activeRun.detail.run.startedAt).getTime(),
         timestamp: new Date().toISOString(),
-        activityLog: [],
       });
 
       await this.stopRun(
@@ -384,22 +373,11 @@ export class RunnerManager {
 
     // Notify webhook so cancelled runs are logged to the sheet
     void notifyWebhookFromManager({
-      event: "task_completed",
       status: "cancelled",
       taskPrompt: maskCredentials(context.detail.run.prompt),
-      targetUrl: (context.detail.scenario?.startTarget as { url?: string })?.url ?? "",
-      executionMode: context.detail.run.mode,
-      rawResponse: reason,
-      aiWalkthrough: "",
-      summary: reason,
-      model: context.detail.run.model,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      turnsUsed: context.detail.events.length,
-      maxTurns: context.detail.run.maxResponseTurns ?? defaultMaxResponseTurns,
+      aiWalkthrough: reason,
       durationMs: Date.now() - new Date(context.detail.run.startedAt).getTime(),
       timestamp: new Date().toISOString(),
-      activityLog: [],
     });
 
     this.activeRunIds.delete(runId);
@@ -695,22 +673,11 @@ export class RunnerManager {
 
     // Notify webhook so failed/crashed runs are logged to the sheet
     void notifyWebhookFromManager({
-      event: "task_completed",
       status: "failed",
       taskPrompt: maskCredentials(context.detail.run.prompt),
-      targetUrl: (context.detail.scenario?.startTarget as { url?: string })?.url ?? "",
-      executionMode: context.detail.run.mode,
-      rawResponse: `Error: ${message}${runnerError?.hint ? ` | Hint: ${runnerError.hint}` : ""}`,
-      aiWalkthrough: "",
-      summary: `Error: ${message}${runnerError?.hint ? ` | Hint: ${runnerError.hint}` : ""}`,
-      model: context.detail.run.model,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      turnsUsed: context.detail.events.length,
-      maxTurns: context.detail.run.maxResponseTurns ?? defaultMaxResponseTurns,
+      aiWalkthrough: `Error: ${message}${runnerError?.hint ? ` | Hint: ${runnerError.hint}` : ""}`,
       durationMs: Date.now() - new Date(context.detail.run.startedAt).getTime(),
       timestamp: new Date().toISOString(),
-      activityLog: [],
     });
 
     this.activeRunIds.delete(context.detail.run.id);

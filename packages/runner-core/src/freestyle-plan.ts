@@ -16,7 +16,20 @@ export async function buildFreestyleCodeInstructions(currentUrl: string): Promis
     );
   }
 
-  const sheetPrompt = getPrompt("freestyle_code_instructions", { currentUrl });
+  // Auto-inject all available context variables.
+  // The Sheet author can use any of these with {{variableName}} syntax.
+  // Variables not used in the template are silently ignored.
+  const contextVariables: Record<string, string> = {
+    currentUrl,
+    appName: process.env.NEXT_PUBLIC_APP_NAME ?? "Agent",
+    browserMode: process.env.CUA_BROWSER_MODE ?? "headless",
+    executionMode: process.env.CUA_EXECUTION_MODE ?? "code",
+    model: process.env.CUA_DEFAULT_MODEL ?? "gpt-5.4",
+    maxTurns: process.env.CUA_MAX_RESPONSE_TURNS ?? "24",
+    timestamp: new Date().toISOString(),
+  };
+
+  const sheetPrompt = getPrompt("freestyle_code_instructions", contextVariables);
   if (!sheetPrompt) {
     throw new Error(
       "[freestyle-plan] Missing 'freestyle_code_instructions' prompt in Google Sheet. " +
@@ -24,7 +37,25 @@ export async function buildFreestyleCodeInstructions(currentUrl: string): Promis
     );
   }
 
-  return sheetPrompt;
+  // Always append runtime context so the agent knows where it is,
+  // even if the Sheet prompt doesn't include {{currentUrl}}
+  const runtimeContext = [
+    "",
+    "--- RUNTIME CONTEXT (auto-injected) ---",
+    `Current URL: ${currentUrl}`,
+    `Timestamp: ${new Date().toISOString()}`,
+    `Mode: ${process.env.CUA_EXECUTION_MODE ?? "code"}`,
+    `Max turns: ${process.env.CUA_MAX_RESPONSE_TURNS ?? "24"}`,
+  ].join("\n");
+
+  const agentLabel = process.env.NEXT_PUBLIC_APP_NAME ?? "Agent";
+  console.log(`  🎯 ${agentLabel} — Mission briefing loaded`);
+  console.log(`     📍 Target: ${currentUrl}`);
+  console.log(`     ⚙️  Mode: ${process.env.CUA_EXECUTION_MODE ?? "code"} | Turns: ${process.env.CUA_MAX_RESPONSE_TURNS ?? "24"}`);
+  console.log(`     📝 Instructions: ${sheetPrompt.length} chars from Sheet`);
+  console.log(``);
+
+  return sheetPrompt + runtimeContext;
 }
 
 /**

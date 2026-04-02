@@ -11,18 +11,16 @@
  * Expected response format from n8n:
  * {
  *   "prompts": {
- *     "freestyle_code_instructions": { "text": "...", "variables": "..." },
- *     "freestyle_native_instructions": { "text": "...", "variables": "..." },
- *     "walkthrough_summary_prompt": { "text": "...", "variables": "..." }
+ *     "freestyle_code_instructions": { "text": "..." },
+ *     "walkthrough_summary_prompt": { "text": "..." }
  *   },
- *   "count": 3,
+ *   "count": 2,
  *   "fetchedAt": "2026-03-31T17:00:00.000Z"
  * }
  */
 
 type PromptEntry = {
   text: string;
-  variables: string;
   description?: string | undefined;
 };
 
@@ -34,6 +32,8 @@ type PromptStoreData = {
 
 let cachedPrompts: PromptStoreData | null = null;
 let syncError: string | null = null;
+
+const agentName = process.env.NEXT_PUBLIC_APP_NAME ?? "Agent";
 
 function getWebhookUrl(): string {
   return process.env.CUA_PROMPTS_WEBHOOK_URL ?? "";
@@ -53,7 +53,10 @@ export async function syncPrompts(): Promise<void> {
     throw new Error(syncError);
   }
 
-  console.log(`[prompt-store] 🔄 Syncing prompts from: ${url}`);
+  console.log(``);
+  console.log(`  🤖 ${agentName} — Syncing instructions from Google Sheet...`);
+  console.log(`  📡 Webhook: ${url.replace(/https?:\/\/[^/]+/, '***')}`);
+  console.log(``);
 
   const maxAttempts = 3;
 
@@ -93,7 +96,6 @@ export async function syncPrompts(): Promise<void> {
           const prompts: Record<string, PromptEntry> = {};
           prompts[String(parsed.prompt_key)] = {
             text: String(parsed.prompt_text),
-            variables: String(parsed.variables ?? ""),
             description: String(parsed.description ?? ""),
           };
           data = { prompts, count: 1, fetchedAt: new Date().toISOString() };
@@ -105,7 +107,6 @@ export async function syncPrompts(): Promise<void> {
             if (r.prompt_key && typeof r.prompt_key === "string") {
               prompts[r.prompt_key.trim()] = {
                 text: String(r.prompt_text ?? ""),
-                variables: String(r.variables ?? ""),
                 description: String(r.description ?? ""),
               };
             }
@@ -147,14 +148,14 @@ export async function syncPrompts(): Promise<void> {
       cachedPrompts = data;
       syncError = null;
 
-      console.log(
-        `[prompt-store] ✅ Synced ${count} prompt(s) at ${data.fetchedAt ?? new Date().toISOString()}`,
-      );
+      console.log(``);
+      console.log(`  ✅ ${agentName} — Instructions loaded (${count} prompt${count > 1 ? 's' : ''})`);
 
       for (const key of Object.keys(data.prompts)) {
         const textLen = data.prompts[key]?.text.length ?? 0;
-        console.log(`  → ${key}: ${textLen} chars`);
+        console.log(`     📋 ${key}: ${textLen} chars`);
       }
+      console.log(``);
 
       return; // Success — exit the retry loop
     } catch (error) {
@@ -173,7 +174,9 @@ export async function syncPrompts(): Promise<void> {
 
       syncError = `Prompt sync failed: ${msg}`;
       cachedPrompts = null;
-      console.error(`[prompt-store] ❌ ${syncError}`);
+      console.error(``);
+      console.error(`  ❌ ${agentName} — Failed to load instructions: ${msg}`);
+      console.error(``);
       throw new Error(syncError);
     }
   }
@@ -231,6 +234,15 @@ export function getPrompt(
         varValue,
       );
     }
+  }
+
+  // Warn about unreplaced placeholders (typos in Sheet)
+  const unreplaced = text.match(/\{\{[a-zA-Z_]+\}\}/g);
+  if (unreplaced) {
+    console.warn(
+      `[prompt-store] ⚠️ Prompt "${key}" has unreplaced variables: ${unreplaced.join(", ")}. ` +
+      `Available: ${variables ? Object.keys(variables).join(", ") : "none"}`,
+    );
   }
 
   return text;
