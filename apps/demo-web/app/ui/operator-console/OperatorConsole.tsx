@@ -57,6 +57,7 @@ export function OperatorConsole({
     healthStatus,
     activeNotifications,
     dismissNotification,
+    retryConnection,
   } = useRunStream({
     initialRunnerIssue,
     runnerBaseUrl,
@@ -67,6 +68,7 @@ export function OperatorConsole({
   const healthBadgeClass =
     healthStatus === "healthy" ? "healthBadgeHealthy" :
     healthStatus === "degraded" ? "healthBadgeDegraded" :
+    healthStatus === "connecting" ? "healthBadgeConnecting" :
     "healthBadgeDead";
   const selectedScenarioTitle = selectedScenario?.title ?? "Autonomous Agent";
   const stageUrl =
@@ -102,7 +104,9 @@ export function OperatorConsole({
         ? currentIssue.title
         : runnerOnline
           ? "Standing by"
-          : "Engine offline";
+          : healthStatus === "connecting"
+            ? "Starting up…"
+            : "Engine offline";
   const stageSupportCopy = selectedRun
     ? selectedRun.run.status === "failed"
       ? issueMessage
@@ -113,7 +117,9 @@ export function OperatorConsole({
         ? issueMessage
         : runnerOnline
         ? "Define a target and mission objective, then deploy the agent."
-        : issueMessage;
+        : healthStatus === "connecting"
+          ? "Connecting to the runner…"
+          : issueMessage;
 
   const emptyReviewMessage = selectedRun
     ? selectedRun.run.status === "running"
@@ -183,8 +189,17 @@ export function OperatorConsole({
           <div className={`healthBadge ${healthBadgeClass}`}>
             <span className="healthBadgeDot" />
             <span className="healthBadgeLabel">
-              {healthStatus === "healthy" ? "Online" : healthStatus === "degraded" ? "Degraded" : "Offline"}
+              {healthStatus === "healthy" ? "Online" : healthStatus === "connecting" ? "Connecting…" : healthStatus === "degraded" ? "Degraded" : "Offline"}
             </span>
+            {healthStatus === "dead" ? (
+              <button
+                className="healthRetryBtn"
+                onClick={retryConnection}
+                type="button"
+              >
+                Retry
+              </button>
+            ) : null}
           </div>
         </div>
 

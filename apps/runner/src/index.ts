@@ -74,10 +74,32 @@ process.on("SIGINT", () => {
 
 // ── Start server ───────────────────────────────────────────────────
 
-try {
-  await server.listen({ port, host });
-  console.log(`Runner listening on http://${host}:${port}`);
-} catch (error) {
-  logCrash("startup_failure", error);
-  process.exit(1);
+const MAX_BIND_RETRIES = 5;
+const BIND_RETRY_DELAY_MS = 3_000;
+
+async function startWithRetry() {
+  for (let attempt = 1; attempt <= MAX_BIND_RETRIES; attempt++) {
+    try {
+      await server.listen({ port, host });
+      console.log(`Runner listening on http://${host}:${port}`);
+      return;
+    } catch (error) {
+      const isPortBusy =
+        error instanceof Error && error.message.includes("EADDRINUSE");
+
+      if (isPortBusy && attempt < MAX_BIND_RETRIES) {
+        console.warn(
+          `[runner] Port ${port} is busy (attempt ${attempt}/${MAX_BIND_RETRIES}). ` +
+          `Retrying in ${BIND_RETRY_DELAY_MS / 1000}s…`,
+        );
+        await new Promise((r) => setTimeout(r, BIND_RETRY_DELAY_MS));
+        continue;
+      }
+
+      logCrash("startup_failure", error);
+      process.exit(1);
+    }
+  }
 }
+
+await startWithRetry();

@@ -404,6 +404,9 @@ export class RunnerManager {
 
     this.activeRunIds.delete(runId);
 
+    // Cleanup disk data — webhook already has the results
+    void this.cleanupRunData(runId);
+
     return structuredClone(context.detail);
   }
 
@@ -603,6 +606,29 @@ export class RunnerManager {
     });
 
     this.activeRunIds.delete(context.detail.run.id);
+
+    // Cleanup disk data — webhook already has the results
+    void this.cleanupRunData(context.detail.run.id);
+  }
+
+  /**
+   * Delete a finished run's data from disk.
+   * The important data (status, walkthrough, tokens) is already in Google Sheets
+   * via the webhook. Local files are only needed during execution.
+   *
+   * Waits 5s so the UI can finish loading the final screenshot.
+   */
+  private async cleanupRunData(runId: string) {
+    // Small delay — let the UI fetch the last screenshot before we delete
+    await new Promise((r) => setTimeout(r, 5_000));
+
+    try {
+      await rm(join(this.dataRoot, "runs", runId), { force: true, recursive: true });
+      await rm(join(this.dataRoot, "workspaces", runId), { force: true, recursive: true });
+      console.log(`[cleanup] Deleted run data: ${runId}`);
+    } catch {
+      // Best-effort — never break anything
+    }
   }
 
   private ensureRunIsActive(context: InternalRunContext) {
@@ -688,6 +714,9 @@ export class RunnerManager {
     });
 
     this.activeRunIds.delete(context.detail.run.id);
+
+    // Cleanup disk data — webhook already has the results
+    void this.cleanupRunData(context.detail.run.id);
   }
 
   private getActiveRun() {

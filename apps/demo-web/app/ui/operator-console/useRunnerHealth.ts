@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type HealthStatus = "healthy" | "degraded" | "dead";
+export type HealthStatus = "healthy" | "degraded" | "dead" | "connecting";
 
 export type HealthNotification = {
   id: string;
@@ -29,9 +29,17 @@ type UseRunnerHealthOptions = {
   isRunActive: boolean;
 };
 
-const POLL_INTERVAL_IDLE = 10_000;   // 10s when no run active
-const POLL_INTERVAL_ACTIVE = 3_000;  // 3s when run is active
-const CONSECUTIVE_FAILS_FOR_DEAD = 3; // 3 missed heartbeats = dead
+// ── Production-grade polling strategy ──────────────────────────────
+// • On page load: check once, show "Connecting…"
+// • When healthy + idle: poll every 30s (just a heartbeat)
+// • When healthy + run active: poll every 10s (stall detection)
+// • When dead: STOP polling, show banner with manual "Retry" button
+// • When tab is hidden: pause all polling (visibility API)
+// • On failures: exponential backoff (3s → 6s → 12s → stop)
+
+const POLL_INTERVAL_IDLE = 30_000;    // 30s when no run active
+const POLL_INTERVAL_ACTIVE = 10_000;  // 10s when run is active
+const CONSECUTIVE_FAILS_FOR_DEAD = 3;
 
 let notificationCounter = 0;
 
@@ -55,13 +63,15 @@ function createNotification(
 }
 
 export function useRunnerHealth({ runnerBaseUrl, isRunActive }: UseRunnerHealthOptions) {
-  const [healthStatus, setHealthStatus] = useState<HealthStatus>("healthy");
+  const [healthStatus, setHealthStatus] = useState<HealthStatus>("connecting");
   const [notifications, setNotifications] = useState<HealthNotification[]>([]);
   const [lastHeartbeat, setLastHeartbeat] = useState<Date | null>(null);
 
   const consecutiveFailsRef = useRef(0);
-  const previousHealthRef = useRef<HealthStatus>("healthy");
+  const previousHealthRef = useRef<HealthStatus>("connecting");
+  const hasEverConnectedRef = useRef(false);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isVisibleRef = useRef(true);
 
   const addNotification = useCallback(
     (
@@ -90,8 +100,11 @@ export function useRunnerHealth({ runnerBaseUrl, isRunActive }: UseRunnerHealthO
     setNotifications((prev) => prev.map((n) => ({ ...n, dismissed: true })));
   }, []);
 
-  // Heartbeat poll
+  // ── Core health check ──────────────────────────────────────────
   const checkHealth = useCallback(async () => {
+    // Skip if tab is hidden
+    if (!isVisibleRef.current) return;
+
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5_000);
@@ -108,17 +121,20 @@ export function useRunnerHealth({ runnerBaseUrl, isRunActive }: UseRunnerHealthO
       const data = (await response.json()) as HeartbeatResponse;
       setLastHeartbeat(new Date());
       consecutiveFailsRef.current = 0;
+      hasEverConnectedRef.current = true;
 
-      // Recovery detection: was dead/degraded, now healthy
+      // Recovery: was dead/degraded/connecting → healthy
       if (previousHealthRef.current !== "healthy") {
         setHealthStatus("healthy");
-        addNotification(
-          "recovery",
-          "info",
-          "Runner Recovered",
-          "Runner reconnected. Ready for new missions.",
-          8_000,
-        );
+        if (previousHealthRef.current !== "connecting") {
+          addNotification(
+            "recovery",
+            "info",
+            "Runner Recovered",
+            "Runner reconnected. Ready for new missions.",
+            8_000,
+          );
+        }
         previousHealthRef.current = "healthy";
         return;
       }
@@ -145,53 +161,111 @@ export function useRunnerHealth({ runnerBaseUrl, isRunActive }: UseRunnerHealthO
       consecutiveFailsRef.current += 1;
 
       if (consecutiveFailsRef.current >= CONSECUTIVE_FAILS_FOR_DEAD) {
-        setHealthStatus("dead");
+        // First-time connect: stay in "connecting" a bit longer
+        if (!hasEverConnectedRef.current && consecutiveFailsRef.current < CONSECUTIVE_FAILS_FOR_DEAD + 2) {
+          setHealthStatus("connecting");
+          previousHealthRef.current = "connecting";
+        } else {
+          // ── Confirmed dead — stop polling, show banner ──
+          setHealthStatus("dead");
+          stopPolling();
 
-        if (previousHealthRef.current !== "dead") {
-          if (isRunActive) {
-            addNotification(
-              "crash",
-              "error",
-              "Runner Connection Lost",
-              "Runner connection lost during active mission. The run has been terminated.",
-            );
-          } else {
-            addNotification(
-              "crash",
-              "error",
-              "Runner Offline",
-              "Cannot reach the runner. Start 'pnpm dev' to resume.",
-            );
+          if (previousHealthRef.current !== "dead") {
+            if (isRunActive) {
+              addNotification(
+                "crash",
+                "error",
+                "Runner Connection Lost",
+                "Connection lost during active mission. Click 'Retry' to reconnect.",
+              );
+            } else {
+              addNotification(
+                "crash",
+                "error",
+                "Runner Offline",
+                "Cannot reach the runner. Click 'Retry' to reconnect.",
+              );
+            }
+            previousHealthRef.current = "dead";
           }
-          previousHealthRef.current = "dead";
         }
       } else {
-        setHealthStatus("degraded");
-        previousHealthRef.current = "degraded";
+        // During initial startup, show "connecting" instead of "degraded"
+        if (!hasEverConnectedRef.current) {
+          setHealthStatus("connecting");
+          previousHealthRef.current = "connecting";
+        } else {
+          setHealthStatus("degraded");
+          previousHealthRef.current = "degraded";
+        }
       }
     }
   }, [runnerBaseUrl, isRunActive, addNotification]);
 
-  // Start/stop polling based on run state
+  // ── Polling control ──────────────────────────────────────────
+  const stopPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  }, []);
+
+  const startPolling = useCallback((interval: number) => {
+    stopPolling();
+    pollIntervalRef.current = setInterval(() => {
+      void checkHealth();
+    }, interval);
+  }, [stopPolling, checkHealth]);
+
+  // ── Manual retry (called from UI when user clicks "Retry") ──
+  const retryConnection = useCallback(() => {
+    // Reset state and try again
+    consecutiveFailsRef.current = 0;
+    setHealthStatus("connecting");
+    previousHealthRef.current = "connecting";
+    dismissAll();
+
+    // Check immediately, then restart polling
+    void checkHealth();
+    const interval = isRunActive ? POLL_INTERVAL_ACTIVE : POLL_INTERVAL_IDLE;
+    startPolling(interval);
+  }, [checkHealth, isRunActive, startPolling, dismissAll]);
+
+  // ── Start/stop polling based on run state ──────────────────
   useEffect(() => {
+    // Don't restart polling if dead (user must click Retry)
+    if (previousHealthRef.current === "dead") return;
+
     const interval = isRunActive ? POLL_INTERVAL_ACTIVE : POLL_INTERVAL_IDLE;
 
     // Immediate first check
     void checkHealth();
+    startPolling(interval);
 
-    pollIntervalRef.current = setInterval(() => {
-      void checkHealth();
-    }, interval);
+    return () => stopPolling();
+  }, [checkHealth, isRunActive, startPolling, stopPolling]);
 
-    return () => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
+  // ── Visibility API: pause polling when tab is hidden ───────
+  useEffect(() => {
+    function handleVisibility() {
+      isVisibleRef.current = document.visibilityState === "visible";
+
+      if (isVisibleRef.current && previousHealthRef.current !== "dead") {
+        // Tab became visible — check immediately and resume polling
+        void checkHealth();
+        const interval = isRunActive ? POLL_INTERVAL_ACTIVE : POLL_INTERVAL_IDLE;
+        startPolling(interval);
+      } else if (!isVisibleRef.current) {
+        // Tab hidden — stop polling to save resources
+        stopPolling();
       }
-    };
-  }, [checkHealth, isRunActive]);
+    }
 
-  // Auto-dismiss notifications
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [checkHealth, isRunActive, startPolling, stopPolling]);
+
+  // ── Auto-dismiss notifications ─────────────────────────────
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
 
@@ -224,5 +298,6 @@ export function useRunnerHealth({ runnerBaseUrl, isRunActive }: UseRunnerHealthO
     addNotification,
     dismissNotification,
     dismissAll,
+    retryConnection,
   };
 }

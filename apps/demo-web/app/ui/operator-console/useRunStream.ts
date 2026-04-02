@@ -126,5 +126,6 @@ export function useRunStream({
     healthStatus: healthHook.healthStatus,
     activeNotifications: healthHook.activeNotifications,
     dismissNotification: healthHook.dismissNotification,
+    retryConnection: healthHook.retryConnection,
   };
 }

@@ -2140,6 +2140,18 @@ code,
   animation: healthBlink 0.8s ease-in-out infinite;
 }
 
+.healthBadgeConnecting {
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+
+.healthBadgeConnecting .healthBadgeDot {
+  background: #60a5fa;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
+  animation: healthConnecting 1.5s ease-in-out infinite;
+}
+
 @keyframes healthPulse {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.4; transform: scale(0.85); }
@@ -2148,6 +2160,36 @@ code,
 @keyframes healthBlink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.2; }
+}
+
+@keyframes healthConnecting {
+  0%, 100% { opacity: 0.3; transform: scale(0.7); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+
+.healthRetryBtn {
+  padding: 2px 10px;
+  margin-left: 4px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: rgba(239, 68, 68, 0.25);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.healthRetryBtn:hover {
+  background: rgba(239, 68, 68, 0.4);
+  border-color: rgba(239, 68, 68, 0.6);
+  transform: scale(1.05);
+}
+
+.healthRetryBtn:active {
+  transform: scale(0.95);
 }
 
 /* ── Toast Notifications ─────────────────────────────── */
