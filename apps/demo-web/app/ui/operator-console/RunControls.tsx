@@ -113,6 +113,19 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
                 <b>Account Not Linked</b><br/><br/>
                 Click the <b>Agent John Wick</b> Chrome Extension in your browser toolbar to sync your active session.
               </div>
+              <a 
+                href="/agent-john-wick-extension.zip" 
+                download
+                className="profileDropdownItem" 
+                style={{ justifyContent: "center", color: "#60a5fa", fontWeight: 500, borderTop: "1px solid rgba(255,255,255,0.06)", textDecoration: "none" }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                  <polyline points="7 10 12 15 17 10"></polyline>
+                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                </svg>
+                Download Extension (.zip)
+              </a>
             </>
           ) : (
             <>
