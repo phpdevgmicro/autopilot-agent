@@ -118,9 +118,8 @@ export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfile
     : null;
   
   const label =
-    action === "connecting" ? "Connecting…" :
     action === "switching" ? "Switching…" :
-    action === "finishing" ? "Saving…" :
+    action === "clearing" ? "Clearing…" :
     status === "connected" && profileDisplayName ? profileDisplayName : 
     status === "connected" ? "Profile Linked" : "No Profile";
 
