@@ -691,11 +691,84 @@ function buildCodeToolDefinitions() {
   ];
 }
 
+function buildAgentToolDefinitions() {
+  return [
+    {
+      type: "function",
+      name: "read_page_content",
+      description: [
+        "Extract structured text content from the current web page DOM.",
+        "Returns headings, paragraphs, links, buttons, and key data visible on the page.",
+        "Use this instead of trying to read text from screenshots — much more accurate.",
+        "Call this when you need to: read prices, extract lists/tables, verify text content, find specific data.",
+      ].join("\n"),
+      strict: true,
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          selector: {
+            description: "Optional CSS selector to scope extraction to a specific part of the page. Use 'body' or omit for full page.",
+            type: "string",
+          },
+        },
+        required: ["selector"],
+        type: "object",
+      },
+    },
+    {
+      type: "function",
+      name: "get_form_fields",
+      description: [
+        "List all visible form fields on the current page with their labels, types, and current values.",
+        "Returns input, select, textarea elements with associated labels.",
+        "Use this before filling forms to know exactly which fields exist and what values they expect.",
+      ].join("\n"),
+      strict: true,
+      parameters: {
+        additionalProperties: false,
+        properties: {},
+        type: "object",
+      },
+    },
+    {
+      type: "function",
+      name: "agent_notepad",
+      description: [
+        "Save or read notes during task execution. Use this to remember data across turns.",
+        "action=save: store a key-value pair. action=read: retrieve a value by key. action=list: list all saved keys.",
+        "Example: save extracted prices, remember form values, track progress on multi-step tasks.",
+      ].join("\n"),
+      strict: true,
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          action: {
+            description: "Operation: save, read, or list",
+            type: "string",
+            enum: ["save", "read", "list"],
+          },
+          key: {
+            description: "Key name for save/read operations",
+            type: "string",
+          },
+          value: {
+            description: "Value to store (for save action only)",
+            type: "string",
+          },
+        },
+        required: ["action", "key", "value"],
+        type: "object",
+      },
+    },
+  ];
+}
+
 function buildComputerToolDefinitions() {
   return [
     {
       type: "computer",
     },
+    ...buildAgentToolDefinitions(),
   ];
 }
 
@@ -802,11 +875,157 @@ ${code}
   return toolOutputs;
 }
 
+// ── Agent Tool Handlers ────────────────────────────────────────────
+
+async function executeReadPageContent(
+  session: BrowserSession,
+  args: { selector?: string },
+): Promise<ToolOutput[]> {
+  const selector = args.selector?.trim() || "body";
+  try {
+    // JS runs inside the browser via Playwright — use string-based evaluate
+    // to avoid Node.js TS config errors about DOM types (document, window, etc.)
+    const content = await session.page.evaluate(`
+      (() => {
+        const sel = ${JSON.stringify(selector)};
+        const el = document.querySelector(sel) || document.body;
+        const results = [];
+
+        results.push("PAGE: " + document.title);
+        results.push("URL: " + window.location.href);
+        results.push("");
+
+        el.querySelectorAll("h1,h2,h3,h4").forEach(h => {
+          const txt = h.innerText && h.innerText.trim();
+          if (txt) results.push("[" + h.tagName + "] " + txt);
+        });
+
+        const textNodes = [];
+        el.querySelectorAll("p, li, td, th, span, label, a").forEach(n => {
+          const txt = n.innerText && n.innerText.trim();
+          if (txt && txt.length > 2 && txt.length < 500) {
+            const tag = n.tagName.toLowerCase();
+            const href = n.href;
+            const prefix = (tag === "a" && href) ? "[LINK: " + href + "]" : "[" + tag + "]";
+            textNodes.push(prefix + " " + txt);
+          }
+        });
+
+        const seen = new Set();
+        for (const t of textNodes) {
+          if (!seen.has(t) && seen.size < 80) {
+            seen.add(t);
+            results.push(t);
+          }
+        }
+
+        el.querySelectorAll("table").forEach((table, ti) => {
+          if (ti > 2) return;
+          results.push("\\n[TABLE " + (ti + 1) + "]");
+          table.querySelectorAll("tr").forEach((row, ri) => {
+            if (ri > 15) return;
+            const cells = Array.from(row.querySelectorAll("td,th")).map(c => (c.innerText || "").trim());
+            results.push(cells.join(" | "));
+          });
+        });
+
+        return results.join("\\n").slice(0, 4000);
+      })()
+    `) as string;
+
+    return [{ text: content || "(empty page content)", type: "input_text" }];
+  } catch (err) {
+    return [{ text: `Error reading page: ${err instanceof Error ? err.message : String(err)}`, type: "input_text" }];
+  }
+}
+
+async function executeGetFormFields(
+  session: BrowserSession,
+): Promise<ToolOutput[]> {
+  try {
+    const fields = await session.page.evaluate(`
+      (() => {
+        const results = [];
+        const inputs = document.querySelectorAll("input:not([type=hidden]), select, textarea");
+        inputs.forEach((el, i) => {
+          const rect = el.getBoundingClientRect();
+          if (rect.width === 0 || rect.height === 0) return;
+
+          const tag = el.tagName.toLowerCase();
+          const type = el.type || tag;
+          const name = el.name || el.id || ("field_" + i);
+          const value = el.value || "";
+          const placeholder = el.placeholder || "";
+          const required = el.required ? " [REQUIRED]" : "";
+          const disabled = el.disabled ? " [DISABLED]" : "";
+
+          let label = "";
+          if (el.id) {
+            const labelEl = document.querySelector('label[for="' + el.id + '"]');
+            if (labelEl) label = (labelEl.innerText || "").trim();
+          }
+          if (!label) {
+            const parentLabel = el.closest("label");
+            if (parentLabel) label = (parentLabel.innerText || "").trim();
+          }
+          if (!label && el.getAttribute("aria-label")) {
+            label = el.getAttribute("aria-label") || "";
+          }
+
+          let options = "";
+          if (tag === "select") {
+            const opts = Array.from(el.options || []).slice(0, 10).map(o => (o.text || "").trim()).filter(Boolean);
+            options = " Options: [" + opts.join(", ") + "]";
+          }
+
+          results.push(
+            (i + 1) + ". [" + type + '] name="' + name + '" label="' + label + '" value="' + value + '" placeholder="' + placeholder + '"' + required + disabled + options + " @ (" + Math.round(rect.x) + "," + Math.round(rect.y) + ")"
+          );
+        });
+
+        return results.length > 0
+          ? "Found " + results.length + " form fields:\\n" + results.join("\\n")
+          : "No visible form fields found on this page.";
+      })()
+    `) as string;
+
+    return [{ text: fields, type: "input_text" }];
+  } catch (err) {
+    return [{ text: `Error reading form fields: ${err instanceof Error ? err.message : String(err)}`, type: "input_text" }];
+  }
+}
+
+function executeAgentNotepad(
+  notepad: Map<string, string>,
+  args: { action: string; key?: string; value?: string },
+): ToolOutput[] {
+  switch (args.action) {
+    case "save": {
+      const key = args.key ?? "default";
+      const value = args.value ?? "";
+      notepad.set(key, value);
+      return [{ text: `Saved "${key}": "${value.slice(0, 200)}"`, type: "input_text" }];
+    }
+    case "read": {
+      const key = args.key ?? "default";
+      const val = notepad.get(key);
+      return [{ text: val ? `${key}: ${val}` : `Key "${key}" not found in notepad.`, type: "input_text" }];
+    }
+    case "list": {
+      const keys = Array.from(notepad.keys());
+      return [{ text: keys.length > 0 ? `Notepad keys: ${keys.join(", ")}` : "Notepad is empty.", type: "input_text" }];
+    }
+    default:
+      return [{ text: `Unknown notepad action: ${args.action}. Use save, read, or list.`, type: "input_text" }];
+  }
+}
+
 async function executeFunctionToolCall(
   input: ResponsesLoopContext,
   functionCall: FunctionCallItem,
   options: {
     vmContext?: vm.Context;
+    notepad?: Map<string, string>;
   } = {},
 ) {
   const toolName = functionCall.name ?? "<unknown>";
@@ -818,21 +1037,41 @@ async function executeFunctionToolCall(
     type: "function_call_requested",
   });
 
-  const output =
-    toolName === "exec_js"
-      ? await executeJavaScriptToolCall(
-          input,
-          functionCall,
-          options.vmContext ??
-            (() => {
-              throw new Error("exec_js requires a vmContext.");
-            })(),
-        )
-      : (() => {
-          throw new Error(
-            `Unexpected function call: ${functionCall.name ?? "<unknown>"}.`,
-          );
-        })();
+  let output: ToolOutput[];
+
+  switch (toolName) {
+    case "exec_js":
+      output = await executeJavaScriptToolCall(
+        input,
+        functionCall,
+        options.vmContext ??
+          (() => {
+            throw new Error("exec_js requires a vmContext.");
+          })(),
+      );
+      break;
+
+    case "read_page_content": {
+      const args = JSON.parse(functionCall.arguments ?? "{}") as { selector?: string };
+      output = await executeReadPageContent(input.session, args);
+      break;
+    }
+
+    case "get_form_fields":
+      output = await executeGetFormFields(input.session);
+      break;
+
+    case "agent_notepad": {
+      const args = JSON.parse(functionCall.arguments ?? "{}") as { action: string; key?: string; value?: string };
+      output = executeAgentNotepad(options.notepad ?? new Map(), args);
+      break;
+    }
+
+    default:
+      throw new Error(
+        `Unexpected function call: ${functionCall.name ?? "<unknown>"}.`,
+      );
+  }
 
   await input.context.emitEvent({
     detail: toolName,
@@ -1277,6 +1516,7 @@ export async function runResponsesNativeComputerLoop(
   let lastTurn = 0;
   const activityLog: ActivityLogEntry[] = [];
   const startTime = Date.now();
+  const agentNotepad = new Map<string, string>();
 
   // ── Dynamic turn budget ──────────────────────────────────────────
   const hardCeiling = input.maxResponseTurns;
@@ -1347,7 +1587,7 @@ export async function runResponsesNativeComputerLoop(
 
         toolOutputs.push({
           call_id: outputItem.call_id,
-          output: await executeFunctionToolCall(input, outputItem),
+          output: await executeFunctionToolCall(input, outputItem, { notepad: agentNotepad }),
           type: "function_call_output",
         });
         continue;
