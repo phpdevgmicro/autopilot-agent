@@ -163,7 +163,7 @@ export async function runWorkspaceLabBrowserFlow(
   const labUrl = labServer.urlFor("index.html");
   const session = await launchBrowserSession({
     browserMode: context.detail.run.browserMode,
-    browserProfile: context.detail.run.browserProfile,
+    ...(context.detail.run.browserProfile ? { browserProfile: context.detail.run.browserProfile } : {}),
     screenshotDir: context.screenshotDirectory,
     startTarget: {
       kind: "remote_url",
