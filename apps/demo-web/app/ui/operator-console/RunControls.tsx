@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ActionButtonsProps } from "./types";
 import { IconPlay, IconStop, IconRefresh, IconLoader, IconTarget } from "./Icons";
-import { ProfileLoginModal } from "./ProfileLoginModal";
+import { IconPlay, IconStop, IconRefresh, IconLoader, IconTarget } from "./Icons";
 
 const optimizeWebhookUrl = process.env.NEXT_PUBLIC_OPTIMIZE_WEBHOOK_URL || "";
 
@@ -22,7 +22,7 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
   const [action, setAction] = useState<"idle" | "connecting" | "switching" | "finishing">("idle");
   const [menuOpen, setMenuOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [showLoginModal, setShowLoginModal] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const checkStatus = useCallback(async () => {
@@ -61,48 +61,17 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
     setTimeout(() => setMessage(null), 6000);
   };
 
-  const launchAndOpenModal = async (clear: boolean) => {
-    setAction(clear ? "switching" : "connecting");
+  const handleClearProfile = async () => {
+    setAction("switching");
     setMenuOpen(false);
     try {
-      if (clear) await fetch(`${runnerBaseUrl}/api/browser/clear-profile`, { method: "POST" });
-      const res = await fetch(`${runnerBaseUrl}/api/browser/connect-profile`, { method: "POST" });
-      const data = await res.json();
-      if (data.mode === "embedded" || data.mode === "remote") {
-        setShowLoginModal(true);
-      } else if (data.message) {
-        showMessage(data.message);
-      }
+      await fetch(`${runnerBaseUrl}/api/browser/clear-profile`, { method: "POST" });
+      showMessage("Profile cleared from server.");
     } catch {
-      showMessage(clear ? "Failed to switch profile." : "Failed to launch browser.");
+      showMessage("Failed to clear profile.");
     }
     setAction("idle");
-  };
-
-  const handleConnect = () => void launchAndOpenModal(false);
-  const handleSwitch = () => void launchAndOpenModal(true);
-
-  const handleLocalLogin = () => {
-    const cmd = `npx tsx scripts/google-login.ts ${runnerBaseUrl}`;
-    // Copy command to clipboard if possible
-    navigator.clipboard?.writeText(cmd).catch(() => {});
-    showMessage(`Run in terminal: ${cmd}`);
-  };
-
-  const handleFinishLogin = async () => {
-    setAction("finishing");
-    setMenuOpen(false);
-    try {
-      const res = await fetch(`${runnerBaseUrl}/api/browser/finish-profile-login`, { method: "POST" });
-      const data = await res.json();
-      showMessage(data.message ?? "Profile session saved.");
-    } catch {
-      showMessage("Failed to finish login session.");
-    }
-    setTimeout(() => {
-      setAction("idle");
-      void checkStatus();
-    }, 2000);
+    void checkStatus();
   };
 
   if (status === "loading" || status === "disabled") return null;
@@ -139,44 +108,19 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
 
           {status !== "connected" ? (
             <>
-              <button className="profileDropdownItem" onClick={() => void handleConnect()}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
-                  <polyline points="10 17 15 12 10 7"/>
-                  <line x1="15" y1="12" x2="3" y2="12"/>
-                </svg>
-                Embedded Browser Login
-              </button>
-              <button className="profileDropdownItem" onClick={() => { setMenuOpen(false); handleLocalLogin(); }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                  <line x1="8" y1="21" x2="16" y2="21"/>
-                  <line x1="12" y1="17" x2="12" y2="21"/>
-                </svg>
-                Local Browser Login
-              </button>
-              <div className="profileDropdownHint">
-                💡 Local: run <code>npx tsx scripts/google-login.ts</code>
+              <div className="profileDropdownHint" style={{ padding: "12px", textAlign: "center", borderTop: "none" }}>
+                <span style={{ fontSize: "16px", display: "block", marginBottom: "8px" }}>🧩</span>
+                <b>Account Not Linked</b><br/><br/>
+                Click the <b>Agent John Wick</b> Chrome Extension in your browser toolbar to sync your active session.
               </div>
             </>
           ) : (
             <>
-              <button className="profileDropdownItem profileDropdownItemSwitch" onClick={() => void handleSwitch()}>
+              <button className="profileDropdownItem profileDropdownItemSwitch" onClick={() => void handleClearProfile()}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="16 3 21 3 21 8"/>
-                  <line x1="4" y1="20" x2="21" y2="3"/>
-                  <polyline points="21 16 21 21 16 21"/>
-                  <line x1="15" y1="15" x2="21" y2="21"/>
-                  <line x1="4" y1="4" x2="9" y2="9"/>
+                   <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line>
                 </svg>
-                Switch Account
-              </button>
-              <button className="profileDropdownItem profileDropdownItemFinish" onClick={() => void handleFinishLogin()}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                  <polyline points="22 4 12 14.01 9 11.01"/>
-                </svg>
-                Finish Login Session
+                Disconnect & Clear Profile
               </button>
             </>
           )}
@@ -190,12 +134,6 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
         </div>
       )}
 
-      <ProfileLoginModal
-        runnerBaseUrl={runnerBaseUrl}
-        isOpen={showLoginModal}
-        onClose={() => setShowLoginModal(false)}
-        onProfileSaved={() => void checkStatus()}
-      />
     </div>
   );
 }
