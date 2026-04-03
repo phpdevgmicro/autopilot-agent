@@ -1423,7 +1423,7 @@ export async function runResponsesCodeLoop(
     });
   } else {
     await input.context.emitEvent({
-      detail: `Completed in ${turnsUsed} turns (budget was ${currentBudget}, ceiling ${hardCeiling}, ${extensionsGranted} extensions)`,
+      detail: finalAssistantMessage,
       level: "ok",
       message: "Model returned a final response.",
       type: "run_progress",
@@ -1688,7 +1688,7 @@ export async function runResponsesNativeComputerLoop(
     });
   } else {
     await input.context.emitEvent({
-      detail: `Completed in ${lastTurn} turns (budget was ${currentBudget}, ceiling ${hardCeiling}, ${extensionsGranted} extensions)`,
+      detail: finalAssistantMessage,
       level: "ok",
       message: "Model returned a final response.",
       type: "run_progress",
