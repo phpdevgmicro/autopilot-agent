@@ -393,7 +393,9 @@ export function createServer(options: CreateServerOptions = {}) {
     const { x, y } = request.body as { x: number; y: number };
     const page = remoteLoginCtx.pages()[0];
     if (!page) { reply.code(404); return { error: "No page" }; }
+    // Move, click, and wait a beat for focus to settle
     await page.mouse.click(x, y);
+    await new Promise(r => setTimeout(r, 150));
     return { ok: true };
   });
 
@@ -402,8 +404,21 @@ export function createServer(options: CreateServerOptions = {}) {
     const { text } = request.body as { text: string };
     const page = remoteLoginCtx.pages()[0];
     if (!page) { reply.code(404); return { error: "No page" }; }
+    // Use fill() on the focused element if possible (more reliable for input fields)
+    // Falls back to keyboard.type() if fill doesn't work
+    try {
+      const focused = page.locator(":focus");
+      const count = await focused.count();
+      if (count > 0) {
+        const tag = await focused.evaluate((el) => el.tagName.toLowerCase());
+        if (tag === "input" || tag === "textarea") {
+          await focused.fill(text);
+          return { ok: true, method: "fill" };
+        }
+      }
+    } catch { /* fallback to type */ }
     await page.keyboard.type(text, { delay: 30 });
-    return { ok: true };
+    return { ok: true, method: "type" };
   });
 
   app.post("/api/browser/login-keypress", async (request, reply) => {

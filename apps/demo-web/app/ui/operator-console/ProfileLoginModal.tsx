@@ -12,43 +12,87 @@ type Props = {
 const VP_W = 1280;
 const VP_H = 900;
 
+// Polling intervals
+const FAST_POLL_MS = 800;   // After user interaction
+const SLOW_POLL_MS = 3000;  // When idle
+const FAST_DURATION_MS = 5000; // How long to stay in fast mode
+
 export function ProfileLoginModal({ runnerBaseUrl, isOpen, onClose, onProfileSaved }: Props) {
   const [imgSrc, setImgSrc] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
   const [clickPos, setClickPos] = useState<{ x: number; y: number } | null>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevUrl = useRef<string | null>(null);
+  const isFetching = useRef(false);
+  const lastInteraction = useRef(0);
+  const mountedRef = useRef(true);
 
-  // Poll screenshots
+  // Smart polling: fast after interaction, slows down when idle
+  const scheduleNextPoll = useCallback(() => {
+    if (!mountedRef.current || !isOpen) return;
+
+    const timeSinceInteraction = Date.now() - lastInteraction.current;
+    const interval = timeSinceInteraction < FAST_DURATION_MS ? FAST_POLL_MS : SLOW_POLL_MS;
+
+    timerRef.current = setTimeout(async () => {
+      if (!mountedRef.current || !isOpen) return;
+      if (isFetching.current) { scheduleNextPoll(); return; } // Skip if previous still running
+
+      isFetching.current = true;
+      try {
+        const r = await fetch(`${runnerBaseUrl}/api/browser/login-screenshot`, { cache: "no-store" });
+        if (!r.ok) { isFetching.current = false; scheduleNextPoll(); return; }
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        if (prevUrl.current) URL.revokeObjectURL(prevUrl.current);
+        prevUrl.current = url;
+        if (mountedRef.current) setImgSrc(url);
+      } catch { /* retry next tick */ }
+      isFetching.current = false;
+      scheduleNextPoll();
+    }, interval);
+  }, [isOpen, runnerBaseUrl]);
+
+  // Mark recent interaction → triggers fast polling
+  const markInteraction = useCallback(() => {
+    lastInteraction.current = Date.now();
+  }, []);
+
+  // Init/cleanup polling
   useEffect(() => {
+    mountedRef.current = true;
+
     if (!isOpen) {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) clearTimeout(timerRef.current);
       if (prevUrl.current) URL.revokeObjectURL(prevUrl.current);
       setImgSrc(null);
       return;
     }
 
-    const grab = async () => {
+    // Initial fetch
+    lastInteraction.current = Date.now(); // Start in fast mode
+    (async () => {
       try {
         const r = await fetch(`${runnerBaseUrl}/api/browser/login-screenshot`, { cache: "no-store" });
-        if (!r.ok) return;
-        const blob = await r.blob();
-        const url = URL.createObjectURL(blob);
-        if (prevUrl.current) URL.revokeObjectURL(prevUrl.current);
-        prevUrl.current = url;
-        setImgSrc(url);
-      } catch { /* retry next tick */ }
-    };
+        if (r.ok) {
+          const blob = await r.blob();
+          const url = URL.createObjectURL(blob);
+          if (prevUrl.current) URL.revokeObjectURL(prevUrl.current);
+          prevUrl.current = url;
+          if (mountedRef.current) setImgSrc(url);
+        }
+      } catch { /* ok */ }
+      scheduleNextPoll();
+    })();
 
-    void grab();
-    timerRef.current = setInterval(grab, 600);
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      mountedRef.current = false;
+      if (timerRef.current) clearTimeout(timerRef.current);
       if (prevUrl.current) { URL.revokeObjectURL(prevUrl.current); prevUrl.current = null; }
     };
-  }, [isOpen, runnerBaseUrl]);
+  }, [isOpen, runnerBaseUrl, scheduleNextPoll]);
 
   const sendClick = useCallback(async (e: React.MouseEvent<HTMLImageElement>) => {
     const img = imgRef.current;
@@ -60,15 +104,17 @@ export function ProfileLoginModal({ runnerBaseUrl, isOpen, onClose, onProfileSav
     setClickPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
     setTimeout(() => setClickPos(null), 500);
 
+    markInteraction();
     await fetch(`${runnerBaseUrl}/api/browser/login-click`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ x, y }),
     }).catch(() => {});
-  }, [runnerBaseUrl]);
+  }, [runnerBaseUrl, markInteraction]);
 
   const sendText = async () => {
     if (!text) return;
+    markInteraction();
     await fetch(`${runnerBaseUrl}/api/browser/login-type`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -78,6 +124,7 @@ export function ProfileLoginModal({ runnerBaseUrl, isOpen, onClose, onProfileSav
   };
 
   const sendKey = async (key: string) => {
+    markInteraction();
     await fetch(`${runnerBaseUrl}/api/browser/login-keypress`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -137,6 +184,7 @@ export function ProfileLoginModal({ runnerBaseUrl, isOpen, onClose, onProfileSav
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void sendText(); } }}
+              autoFocus
             />
             <button className="loginModalSendBtn" onClick={() => void sendText()} type="button" title="Send text">↵</button>
           </div>
