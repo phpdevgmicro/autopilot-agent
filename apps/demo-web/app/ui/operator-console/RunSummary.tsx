@@ -32,8 +32,8 @@ export function ConsoleTopbar({
       <div className="statusCluster" style={{ gap: '16px' }}>
         <ConnectProfileButton
           runnerBaseUrl={runnerBaseUrl}
-          selectedProfile={selectedProfile}
-          onProfileChange={onProfileChange}
+          {...(selectedProfile !== undefined ? { selectedProfile } : {})}
+          {...(onProfileChange !== undefined ? { onProfileChange } : {})}
         />
         <div className="topbarStatusPill" style={{ background: 'rgba(255, 255, 255, 0.04)', padding: '6px 14px', borderRadius: '16px' }}>
           {stageHeadline}
