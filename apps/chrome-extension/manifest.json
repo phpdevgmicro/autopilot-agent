@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Agent John Wick Connector",
+  "version": "1.0.0",
+  "description": "Securely connects your Google account to Agent John Wick.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Agent John Wick"
+  },
+  "permissions": [
+    "cookies",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "https://*.google.com/*",
+    "https://*.youtube.com/*"
+  ]
+}
