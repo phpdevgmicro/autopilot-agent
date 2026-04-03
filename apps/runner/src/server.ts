@@ -378,6 +378,90 @@ export function createServer(options: CreateServerOptions = {}) {
     return { status: "no_session" };
   });
 
+  // ── Import cookies from local browser login ───────────
+  app.post("/api/browser/import-cookies", async (request, reply) => {
+    if (process.env.CUA_BROWSER_PERSIST === "false") {
+      reply.code(400);
+      return { error: "Browser persistence is disabled" };
+    }
+
+    const { cookies, source } = request.body as {
+      cookies: Array<{
+        name: string;
+        value: string;
+        domain: string;
+        path: string;
+        expires?: number;
+        httpOnly?: boolean;
+        secure?: boolean;
+        sameSite?: string;
+      }>;
+      localStorage?: Record<string, string>;
+      source?: string;
+    };
+
+    if (!cookies || !Array.isArray(cookies) || cookies.length === 0) {
+      reply.code(400);
+      return { error: "No cookies provided" };
+    }
+
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { chromium } = await import("playwright");
+
+    try {
+      await mkdir(profileDir, { recursive: true });
+
+      // Launch a temporary browser context to import cookies
+      // This ensures they're stored in the proper Chromium profile format
+      const ctx = await chromium.launchPersistentContext(profileDir, {
+        headless: true,
+        args: ["--no-first-run", "--no-default-browser-check", "--disable-gpu", "--no-sandbox"],
+        ignoreDefaultArgs: ["--enable-automation"],
+      });
+
+      // Add cookies to the browser context
+      await ctx.addCookies(cookies.map(c => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path || "/",
+        expires: c.expires ?? -1,
+        httpOnly: c.httpOnly ?? false,
+        secure: c.secure ?? false,
+        sameSite: (c.sameSite as "Strict" | "Lax" | "None") ?? "Lax",
+      })));
+
+      // Navigate to Google to verify cookies work
+      const page = ctx.pages()[0] ?? await ctx.newPage();
+      await page.goto("https://myaccount.google.com", { timeout: 15_000 }).catch(() => {});
+      const title = await page.title().catch(() => "unknown");
+
+      // Close context — cookies are now persisted in the profile directory
+      await ctx.close();
+
+      // Also save cookies as a backup JSON file
+      const backupPath = join(profileDir, "imported-cookies.json");
+      await writeFile(backupPath, JSON.stringify({ cookies, source, importedAt: new Date().toISOString() }, null, 2));
+
+      const imported = cookies.length;
+      const googleCookies = cookies.filter(c => c.domain.includes("google")).length;
+
+      console.log(`[import-cookies] Imported ${imported} cookies (${googleCookies} Google) from ${source || "unknown"}`);
+      console.log(`[import-cookies] Verification page: "${title}"`);
+
+      return {
+        status: "imported",
+        message: `Successfully imported ${imported} cookies (${googleCookies} Google cookies).`,
+        imported,
+        googleCookies,
+        pageTitle: title,
+      };
+    } catch (err: unknown) {
+      reply.code(500);
+      return { error: "Failed to import cookies", hint: String(err) };
+    }
+  });
+
   // ── Embedded login interaction endpoints ───────────────
   app.get("/api/browser/login-screenshot", async (_request, reply) => {
     if (!remoteLoginCtx) { reply.code(404); return { error: "No active login session" }; }

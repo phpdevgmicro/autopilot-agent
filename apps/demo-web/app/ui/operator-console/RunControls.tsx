@@ -82,6 +82,13 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
   const handleConnect = () => void launchAndOpenModal(false);
   const handleSwitch = () => void launchAndOpenModal(true);
 
+  const handleLocalLogin = () => {
+    const cmd = `npx tsx scripts/google-login.ts ${runnerBaseUrl}`;
+    // Copy command to clipboard if possible
+    navigator.clipboard?.writeText(cmd).catch(() => {});
+    showMessage(`Run in terminal: ${cmd}`);
+  };
+
   const handleFinishLogin = async () => {
     setAction("finishing");
     setMenuOpen(false);
@@ -131,14 +138,27 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
           </div>
 
           {status !== "connected" ? (
-            <button className="profileDropdownItem" onClick={() => void handleConnect()}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
-                <polyline points="10 17 15 12 10 7"/>
-                <line x1="15" y1="12" x2="3" y2="12"/>
-              </svg>
-              Connect Google Profile
-            </button>
+            <>
+              <button className="profileDropdownItem" onClick={() => void handleConnect()}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+                  <polyline points="10 17 15 12 10 7"/>
+                  <line x1="15" y1="12" x2="3" y2="12"/>
+                </svg>
+                Embedded Browser Login
+              </button>
+              <button className="profileDropdownItem" onClick={() => { setMenuOpen(false); handleLocalLogin(); }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                  <line x1="8" y1="21" x2="16" y2="21"/>
+                  <line x1="12" y1="17" x2="12" y2="21"/>
+                </svg>
+                Local Browser Login
+              </button>
+              <div className="profileDropdownHint">
+                💡 Local: run <code>npx tsx scripts/google-login.ts</code>
+              </div>
+            </>
           ) : (
             <>
               <button className="profileDropdownItem profileDropdownItemSwitch" onClick={() => void handleSwitch()}>

@@ -2942,6 +2942,22 @@ code,
   color: #4ade80;
 }
 
+.profileDropdownHint {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #888;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.profileDropdownHint code {
+  background: rgba(255,255,255,0.08);
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #4ade80;
+  word-break: break-all;
+}
+
 /* Profile Action Toast */
 .profileToast {
   position: fixed;
