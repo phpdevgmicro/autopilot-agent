@@ -22,7 +22,7 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
   const [action, setAction] = useState<"idle" | "connecting" | "switching" | "finishing">("idle");
   const [menuOpen, setMenuOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+
   const menuRef = useRef<HTMLDivElement>(null);
 
   const checkStatus = useCallback(async () => {
