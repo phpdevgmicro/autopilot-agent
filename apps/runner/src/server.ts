@@ -300,14 +300,8 @@ export function createServer(options: CreateServerOptions = {}) {
 
         return {
           status: "launched",
-          mode: "remote",
-          message: "Browser launched on port 9222. SSH tunnel and open http://localhost:9222 to log in.",
-          instructions: [
-            "Run: ssh -L 9222:localhost:9222 user@vm-ip",
-            "Open: http://localhost:9222",
-            "Click page → Log in to Google",
-            "Click 'Done' to save profile",
-          ],
+          mode: "embedded",
+          message: "Login session started. Use the browser viewer to log in.",
           profileDir,
         };
       } catch (err: unknown) {
@@ -346,14 +340,79 @@ export function createServer(options: CreateServerOptions = {}) {
     }
   });
 
+  // Clear browser profile (for switching accounts)
+  app.post("/api/browser/clear-profile", async (_request, reply) => {
+    if (process.env.CUA_BROWSER_PERSIST === "false") {
+      reply.code(400);
+      return {
+        error: "Browser persistence is disabled",
+        hint: "Set CUA_BROWSER_PERSIST=true in .env to enable persistent profiles.",
+      };
+    }
+
+    const { rm } = await import("node:fs/promises");
+
+    // Close any active remote login session first
+    if (remoteLoginCtx) {
+      try { await remoteLoginCtx.close(); } catch { /* ok */ }
+      remoteLoginCtx = null;
+    }
+
+    try {
+      await rm(profileDir, { recursive: true, force: true });
+      console.log(`[clear-profile] Cleared profile at ${profileDir}`);
+      return { status: "cleared", message: "Browser profile cleared. Ready for re-login.", profileDir };
+    } catch (err: unknown) {
+      reply.code(500);
+      return { error: "Failed to clear profile", hint: String(err) };
+    }
+  });
+
   // Close remote login browser and save profile (VM only)
   app.post("/api/browser/finish-profile-login", async () => {
     if (remoteLoginCtx) {
       try { await remoteLoginCtx.close(); } catch { /* ok */ }
       remoteLoginCtx = null;
-      return { status: "saved", message: "Profile saved. Restart app to use." };
+      return { status: "saved", message: "Profile saved. Ready to use." };
     }
     return { status: "no_session" };
+  });
+
+  // ── Embedded login interaction endpoints ───────────────
+  app.get("/api/browser/login-screenshot", async (_request, reply) => {
+    if (!remoteLoginCtx) { reply.code(404); return { error: "No active login session" }; }
+    const page = remoteLoginCtx.pages()[0];
+    if (!page) { reply.code(404); return { error: "No page" }; }
+    const buf = await page.screenshot({ type: "jpeg", quality: 75 });
+    reply.header("Content-Type", "image/jpeg").header("Cache-Control", "no-store");
+    return buf;
+  });
+
+  app.post("/api/browser/login-click", async (request, reply) => {
+    if (!remoteLoginCtx) { reply.code(404); return { error: "No active login session" }; }
+    const { x, y } = request.body as { x: number; y: number };
+    const page = remoteLoginCtx.pages()[0];
+    if (!page) { reply.code(404); return { error: "No page" }; }
+    await page.mouse.click(x, y);
+    return { ok: true };
+  });
+
+  app.post("/api/browser/login-type", async (request, reply) => {
+    if (!remoteLoginCtx) { reply.code(404); return { error: "No active login session" }; }
+    const { text } = request.body as { text: string };
+    const page = remoteLoginCtx.pages()[0];
+    if (!page) { reply.code(404); return { error: "No page" }; }
+    await page.keyboard.type(text, { delay: 30 });
+    return { ok: true };
+  });
+
+  app.post("/api/browser/login-keypress", async (request, reply) => {
+    if (!remoteLoginCtx) { reply.code(404); return { error: "No active login session" }; }
+    const { key } = request.body as { key: string };
+    const page = remoteLoginCtx.pages()[0];
+    if (!page) { reply.code(404); return { error: "No page" }; }
+    await page.keyboard.press(key);
+    return { ok: true };
   });
 
   return app;

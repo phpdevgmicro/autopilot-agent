@@ -112,6 +112,41 @@ const toolExecutionTimeoutMs = Number(process.env.CUA_TOOL_TIMEOUT_MS ?? "20000"
 const defaultReasoningEffort = (process.env.CUA_REASONING_EFFORT ?? "low") as "low" | "medium" | "high";
 const webhookUrl = process.env.CUA_WEBHOOK_URL?.trim() || null;
 
+// ── Dynamic Turn Budget ─────────────────────────────────────────────
+// Instead of a fixed turn limit, the agent starts with a soft budget
+// and auto-extends in batches when still making progress.
+const TURN_EXTENSION_BATCH = Number(process.env.CUA_TURN_EXTENSION_BATCH ?? "10");
+const INITIAL_TURN_BUDGET = Number(process.env.CUA_INITIAL_TURN_BUDGET ?? "15");
+
+/**
+ * Estimate an initial turn budget based on task complexity heuristics.
+ * Simple lookups get fewer turns, multi-step workflows get more.
+ */
+function estimateInitialBudget(prompt: string, hardCeiling: number): number {
+  const lower = prompt.toLowerCase();
+  const wordCount = prompt.split(/\s+/).length;
+
+  // Complexity signals
+  const complexKeywords = [
+    "login", "sign in", "fill", "form", "submit", "checkout",
+    "multiple", "steps", "navigate", "download", "upload",
+    "create account", "register", "book", "schedule", "pay",
+    "and then", "after that", "next", "finally",
+  ];
+  const matchedKeywords = complexKeywords.filter(k => lower.includes(k)).length;
+
+  let budget: number;
+  if (matchedKeywords >= 3 || wordCount > 80) {
+    budget = Math.min(35, hardCeiling);   // Complex task
+  } else if (matchedKeywords >= 1 || wordCount > 30) {
+    budget = Math.min(20, hardCeiling);   // Medium task
+  } else {
+    budget = Math.min(INITIAL_TURN_BUDGET, hardCeiling); // Simple task
+  }
+
+  return budget;
+}
+
 /**
  * Retry wrapper with exponential backoff for transient API errors.
  * Retries on 429 (rate limit), 500, 502, 503, and network errors.
@@ -1033,12 +1068,27 @@ export async function runResponsesCodeLoop(
   const activityLog: ActivityLogEntry[] = [];
   const startTime = Date.now();
 
-  for (let turn = 1; turn <= input.maxResponseTurns; turn += 1) {
+  // ── Dynamic turn budget ──────────────────────────────────────────
+  const hardCeiling = input.maxResponseTurns; // absolute max from env
+  let currentBudget = estimateInitialBudget(
+    input.prompt ?? input.context.detail.run.prompt,
+    hardCeiling,
+  );
+  let extensionsGranted = 0;
+
+  await input.context.emitEvent({
+    detail: `Initial budget: ${currentBudget} turns (hard ceiling: ${hardCeiling})`,
+    level: "ok",
+    message: `⚡ Dynamic turn budget: starting with ${currentBudget} turns`,
+    type: "run_progress",
+  });
+
+  for (let turn = 1; turn <= currentBudget; turn += 1) {
     assertActive(input.context.signal);
 
     // Micro-event: signal that we're waiting for the model
     await input.context.emitEvent({
-      detail: `Turn ${turn}/${input.maxResponseTurns} · Awaiting model response...`,
+      detail: `Turn ${turn}/${currentBudget} · Awaiting model response... (ceiling: ${hardCeiling})`,
       level: "pending",
       message: `Sending request to model (turn ${turn})...`,
       type: "run_progress",
@@ -1105,19 +1155,36 @@ export async function runResponsesCodeLoop(
     }
 
     nextInput = toolOutputs;
+
+    // ── Auto-extend budget if agent is still working and approaching limit ──
+    if (turn >= currentBudget && currentBudget < hardCeiling) {
+      const extension = Math.min(TURN_EXTENSION_BATCH, hardCeiling - currentBudget);
+      if (extension > 0) {
+        currentBudget += extension;
+        extensionsGranted += 1;
+        await input.context.emitEvent({
+          detail: `Extended by +${extension} turns → new budget: ${currentBudget}/${hardCeiling} (extension #${extensionsGranted})`,
+          level: "ok",
+          message: `🔄 Auto-extended turn budget (+${extension})`,
+          type: "run_progress",
+        });
+      }
+    }
   }
 
+  const turnsUsed = activityLog.length > 0 ? activityLog[activityLog.length - 1]!.turn : 0;
+
   if (!finalAssistantMessage) {
-    finalAssistantMessage = `Task partially completed — used all ${input.maxResponseTurns} turns. The agent was still working when the turn budget was exhausted. Consider increasing CUA_MAX_RESPONSE_TURNS for complex tasks.`;
+    finalAssistantMessage = `Task partially completed — used all ${currentBudget} turns (hard ceiling: ${hardCeiling}, extensions: ${extensionsGranted}). The agent was still working when the turn budget was exhausted.`;
     await input.context.emitEvent({
       detail: finalAssistantMessage,
       level: "warn",
-      message: `Turn budget (${input.maxResponseTurns}) exhausted. Returning partial result.`,
+      message: `Hard ceiling (${hardCeiling}) reached after ${extensionsGranted} extensions. Returning partial result.`,
       type: "run_progress",
     });
   } else {
     await input.context.emitEvent({
-      detail: finalAssistantMessage,
+      detail: `Completed in ${turnsUsed} turns (budget was ${currentBudget}, ceiling ${hardCeiling}, ${extensionsGranted} extensions)`,
       level: "ok",
       message: "Model returned a final response.",
       type: "run_progress",
@@ -1125,7 +1192,7 @@ export async function runResponsesCodeLoop(
   }
 
   await input.context.emitEvent({
-    detail: `${totalInputTokens} in · ${totalOutputTokens} out · ${input.maxResponseTurns} max turns`,
+    detail: `${totalInputTokens} in · ${totalOutputTokens} out · ${turnsUsed} turns used (budget: ${currentBudget}, ceiling: ${hardCeiling})`,
     level: "ok",
     message: "Token usage summary for this run.",
     type: "run_progress",
@@ -1211,13 +1278,25 @@ export async function runResponsesNativeComputerLoop(
   const activityLog: ActivityLogEntry[] = [];
   const startTime = Date.now();
 
-  for (let turn = 1; turn <= input.maxResponseTurns; turn += 1) {
+  // ── Dynamic turn budget ──────────────────────────────────────────
+  const hardCeiling = input.maxResponseTurns;
+  let currentBudget = estimateInitialBudget(operatorPrompt, hardCeiling);
+  let extensionsGranted = 0;
+
+  await input.context.emitEvent({
+    detail: `Initial budget: ${currentBudget} turns (hard ceiling: ${hardCeiling})`,
+    level: "ok",
+    message: `⚡ Dynamic turn budget: starting with ${currentBudget} turns`,
+    type: "run_progress",
+  });
+
+  for (let turn = 1; turn <= currentBudget; turn += 1) {
     lastTurn = turn;
     assertActive(input.context.signal);
 
     // Micro-event: signal that we're waiting for the model
     await input.context.emitEvent({
-      detail: `Turn ${turn}/${input.maxResponseTurns} · Awaiting model response...`,
+      detail: `Turn ${turn}/${currentBudget} · Awaiting model response... (ceiling: ${hardCeiling})`,
       level: "pending",
       message: `Sending request to model (turn ${turn})...`,
       type: "run_progress",
@@ -1342,19 +1421,34 @@ export async function runResponsesNativeComputerLoop(
     }
 
     nextInput = toolOutputs;
+
+    // ── Auto-extend budget if agent is still working and approaching limit ──
+    if (turn >= currentBudget && currentBudget < hardCeiling) {
+      const extension = Math.min(TURN_EXTENSION_BATCH, hardCeiling - currentBudget);
+      if (extension > 0) {
+        currentBudget += extension;
+        extensionsGranted += 1;
+        await input.context.emitEvent({
+          detail: `Extended by +${extension} turns → new budget: ${currentBudget}/${hardCeiling} (extension #${extensionsGranted})`,
+          level: "ok",
+          message: `🔄 Auto-extended turn budget (+${extension})`,
+          type: "run_progress",
+        });
+      }
+    }
   }
 
   if (!finalAssistantMessage) {
-    finalAssistantMessage = `Task partially completed — used all ${input.maxResponseTurns} turns. The agent was still working when the turn budget was exhausted. Consider increasing CUA_MAX_RESPONSE_TURNS for complex tasks.`;
+    finalAssistantMessage = `Task partially completed — used all ${currentBudget} turns (hard ceiling: ${hardCeiling}, extensions: ${extensionsGranted}). The agent was still working when the turn budget was exhausted.`;
     await input.context.emitEvent({
       detail: finalAssistantMessage,
       level: "warn",
-      message: `Turn budget (${input.maxResponseTurns}) exhausted. Returning partial result.`,
+      message: `Hard ceiling (${hardCeiling}) reached after ${extensionsGranted} extensions. Returning partial result.`,
       type: "run_progress",
     });
   } else {
     await input.context.emitEvent({
-      detail: finalAssistantMessage,
+      detail: `Completed in ${lastTurn} turns (budget was ${currentBudget}, ceiling ${hardCeiling}, ${extensionsGranted} extensions)`,
       level: "ok",
       message: "Model returned a final response.",
       type: "run_progress",
@@ -1362,7 +1456,7 @@ export async function runResponsesNativeComputerLoop(
   }
 
   await input.context.emitEvent({
-    detail: `${totalInputTokens} in · ${totalOutputTokens} out · ${lastTurn}/${input.maxResponseTurns} turns`,
+    detail: `${totalInputTokens} in · ${totalOutputTokens} out · ${lastTurn} turns used (budget: ${currentBudget}, ceiling: ${hardCeiling})`,
     level: "ok",
     message: "Token usage summary for this run.",
     type: "run_progress",
@@ -1377,7 +1471,7 @@ export async function runResponsesNativeComputerLoop(
     totalInputTokens,
     totalOutputTokens,
     lastTurn,
-    input.maxResponseTurns,
+    currentBudget,
   );
 
   // Always emit walkthrough event so the UI never stays stuck on "generating summary..."

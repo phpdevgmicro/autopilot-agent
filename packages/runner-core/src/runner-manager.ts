@@ -88,7 +88,7 @@ type ReplayBundle = {
 
 const defaultStepDelayMs = Number(process.env.CUA_STEP_DELAY_MS ?? "650");
 const defaultRunModel = process.env.CUA_DEFAULT_MODEL ?? "gpt-5.4";
-const defaultMaxResponseTurns = Number(process.env.CUA_MAX_RESPONSE_TURNS ?? "24");
+const defaultMaxResponseTurns = Number(process.env.CUA_MAX_RESPONSE_TURNS ?? "100");
 const defaultBrowserMode = (process.env.CUA_BROWSER_MODE ?? "headless") as "headless" | "headful";
 const defaultExecutionMode = (process.env.CUA_EXECUTION_MODE ?? "native") as "code" | "native";
 
@@ -612,11 +612,11 @@ export class RunnerManager {
    * The important data (status, walkthrough, tokens) is already in Google Sheets
    * via the webhook. Local files are only needed during execution.
    *
-   * Waits 5s so the UI can finish loading the final screenshot.
+   * Waits 2 minutes so the UI can render screenshots and summary,
+   * then cleans up to keep disk usage minimal on the VM.
    */
   private async cleanupRunData(runId: string) {
-    // Small delay — let the UI fetch the last screenshot before we delete
-    await new Promise((r) => setTimeout(r, 5_000));
+    await new Promise((r) => setTimeout(r, 2 * 60 * 1_000));
 
     try {
       await rm(join(this.dataRoot, "runs", runId), { force: true, recursive: true });

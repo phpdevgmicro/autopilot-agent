@@ -25,7 +25,7 @@ export async function buildFreestyleCodeInstructions(currentUrl: string): Promis
     browserMode: process.env.CUA_BROWSER_MODE ?? "headless",
     executionMode: process.env.CUA_EXECUTION_MODE ?? "code",
     model: process.env.CUA_DEFAULT_MODEL ?? "gpt-5.4",
-    maxTurns: process.env.CUA_MAX_RESPONSE_TURNS ?? "24",
+    maxTurns: `dynamic (ceiling: ${process.env.CUA_MAX_RESPONSE_TURNS ?? "100"})`,
     timestamp: new Date().toISOString(),
   };
 
@@ -45,13 +45,13 @@ export async function buildFreestyleCodeInstructions(currentUrl: string): Promis
     `Current URL: ${currentUrl}`,
     `Timestamp: ${new Date().toISOString()}`,
     `Mode: ${process.env.CUA_EXECUTION_MODE ?? "code"}`,
-    `Max turns: ${process.env.CUA_MAX_RESPONSE_TURNS ?? "24"}`,
+    `Turn budget: dynamic (hard ceiling: ${process.env.CUA_MAX_RESPONSE_TURNS ?? "100"})`,
   ].join("\n");
 
   const agentLabel = process.env.NEXT_PUBLIC_APP_NAME ?? "Agent";
   console.log(`  🎯 ${agentLabel} — Mission briefing loaded`);
   console.log(`     📍 Target: ${currentUrl}`);
-  console.log(`     ⚙️  Mode: ${process.env.CUA_EXECUTION_MODE ?? "code"} | Turns: ${process.env.CUA_MAX_RESPONSE_TURNS ?? "24"}`);
+  console.log(`     ⚙️  Mode: ${process.env.CUA_EXECUTION_MODE ?? "code"} | Turns: dynamic (ceiling: ${process.env.CUA_MAX_RESPONSE_TURNS ?? "100"})`);
   console.log(`     📝 Instructions: ${sheetPrompt.length} chars from Sheet`);
   console.log(``);
 
