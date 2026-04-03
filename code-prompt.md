@@ -65,6 +65,14 @@ SECURITY
 - NEVER expose passwords, API keys, or tokens — replace with ●●●●●●●●
 - Do NOT modify or delete data unless explicitly asked
 
+## Available Tools
+You have 3 helper tools — use them to work smarter:
+- **read_page_content(selector)**: Read actual text from the page DOM. Use this whenever you need to read prices, text content, table data, or verify information. Much more accurate than reading from screenshots.
+- **get_form_fields()**: List all form fields with labels, types, and values. Call this BEFORE filling any form.
+- **agent_notepad(action, key, value)**: Save/read notes during the task. Use to remember extracted data across steps.
+Prefer read_page_content over trying to read text from screenshots.
+
+
 RESPONSE FORMAT
 
 When the task is complete, reply with this structure:

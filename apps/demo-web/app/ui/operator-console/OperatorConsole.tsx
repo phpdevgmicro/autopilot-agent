@@ -20,7 +20,17 @@ export function OperatorConsole({
   scenarios,
 }: OperatorConsoleProps) {
   const [activeTab, setActiveTab] = useState<StageTab>("browser");
+  const [selectedProfile, setSelectedProfile] = useState<string>("");
 
+  useEffect(() => {
+    const saved = localStorage.getItem("cua_selected_profile");
+    if (saved) setSelectedProfile(saved);
+  }, []);
+
+  const handleProfileChange = (p: string) => {
+    setSelectedProfile(p);
+    localStorage.setItem("cua_selected_profile", p);
+  };
   const {
     activityFeedLabel,
     activityFeedRef,
@@ -62,6 +72,7 @@ export function OperatorConsole({
     initialRunnerIssue,
     runnerBaseUrl,
     scenarios,
+    selectedProfile,
   });
 
   // Health monitoring
@@ -185,6 +196,8 @@ export function OperatorConsole({
             runnerBaseUrl={runnerBaseUrl}
             runnerOnline={runnerOnline}
             stageHeadline={stageHeadline}
+            selectedProfile={selectedProfile}
+            onProfileChange={handleProfileChange}
           />
           <div className={`healthBadge ${healthBadgeClass}`}>
             <span className="healthBadgeDot" />

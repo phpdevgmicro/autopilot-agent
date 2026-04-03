@@ -234,6 +234,7 @@ export class RunnerManager {
     const workspacePath = this.getRunWorkspacePath(runId);
     const runRecord = runRecordSchema.parse({
       browserMode: request.browserMode ?? defaultBrowserMode,
+      browserProfile: request.browserProfile,
       id: runId,
       labId: scenario.labId,
       maxResponseTurns: request.maxResponseTurns ?? defaultMaxResponseTurns,

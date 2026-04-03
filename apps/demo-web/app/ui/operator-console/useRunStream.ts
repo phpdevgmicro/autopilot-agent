@@ -20,12 +20,14 @@ type UseRunStreamOptions = {
   initialRunnerIssue: RunnerIssue | null;
   runnerBaseUrl: string;
   scenarios: ScenarioManifest[];
+  selectedProfile?: string;
 };
 
 export function useRunStream({
   initialRunnerIssue,
   runnerBaseUrl,
   scenarios: initialScenarios,
+  selectedProfile,
 }: UseRunStreamOptions) {
   /* ── 1. Scenario management ── */
   const scenarioHook = useScenarios({
@@ -42,6 +44,7 @@ export function useRunStream({
     runnerOnline: scenarioHook.runnerOnline,
     selectedScenario: scenarioHook.selectedScenario,
     startUrl: scenarioHook.startUrl,
+    selectedProfile,
   });
 
   /* ── 3. Screenshot selection & scrubber ── */

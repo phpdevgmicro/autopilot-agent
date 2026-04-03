@@ -60,6 +60,7 @@ export type UseRunLifecycleOptions = {
   selectedScenario: ScenarioManifest | null;
   prompt: string;
   startUrl: string;
+  selectedProfile?: string | undefined;
   initialRunnerIssue: RunnerIssue | null;
 };
 
@@ -69,6 +70,7 @@ export function useRunLifecycle({
   selectedScenario,
   prompt,
   startUrl,
+  selectedProfile,
   initialRunnerIssue,
 }: UseRunLifecycleOptions) {
   const [activeRun, setActiveRun] = useState<RunDetail | null>(null);
@@ -290,6 +292,7 @@ export function useRunLifecycle({
             prompt,
             scenarioId: selectedScenario.id,
             startUrl: startUrl.trim() || undefined,
+            browserProfile: selectedProfile || undefined,
           }),
           headers: { "Content-Type": "application/json" },
           method: "POST",

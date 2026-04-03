@@ -51,6 +51,7 @@ export type BrowserSession = {
 
 type LaunchBrowserSessionOptions = {
   browserMode: BrowserMode;
+  browserProfile?: string;
   now?: () => Date;
   screenshotDir: string;
   startTarget: StartTarget;
@@ -95,7 +96,12 @@ export async function launchBrowserSession(
     options.workspacePath,
   );
 
-  const profileDir = process.env.CUA_BROWSER_PROFILE_DIR ?? defaultProfileDir;
+  const baseProfileDir = process.env.CUA_BROWSER_PROFILE_DIR ?? defaultProfileDir;
+  const profileDir = join(baseProfileDir, options.browserProfile || "default");
+  
+  console.log(`[browser-runtime] 🔑 browserProfile option: "${options.browserProfile || "(none)"}"`);
+  console.log(`[browser-runtime] 📂 Resolved profile dir: ${profileDir}`);
+  
   const usePersistentProfile = process.env.CUA_BROWSER_PERSIST !== "false";
   const locale = process.env.CUA_BROWSER_LOCALE ?? "en-US";
 
@@ -296,6 +302,124 @@ export async function launchBrowserSession(
         });
       }
     } catch(e) {}
+  `);
+
+  // ── Cookie Popup Auto-Dismiss ─────────────────────────────────────
+  // Automatically detects and dismisses cookie consent banners so the
+  // agent never wastes turns clicking "Accept All" buttons.
+  // Uses a MutationObserver to catch dynamically injected banners.
+  await context.addInitScript(`
+    (function() {
+      // Common "Accept" button text patterns (case-insensitive)
+      var acceptPatterns = [
+        /^accept\\s*(all|cookies)?$/i,
+        /^allow\\s*(all|cookies)?$/i,
+        /^agree/i,
+        /^got\\s*it/i,
+        /^ok$/i,
+        /^i\\s*agree/i,
+        /^continue$/i,
+        /^consent$/i,
+        /^acknowledge/i,
+      ];
+
+      // Common selectors for cookie banners
+      var bannerSelectors = [
+        '[id*="cookie" i][id*="banner" i]',
+        '[id*="cookie" i][id*="consent" i]',
+        '[id*="cookie" i][id*="notice" i]',
+        '[id*="cookie" i][id*="popup" i]',
+        '[id*="cookie" i][id*="bar" i]',
+        '[id*="gdpr" i]',
+        '[class*="cookie-banner" i]',
+        '[class*="cookie-consent" i]',
+        '[class*="cookie-notice" i]',
+        '[class*="consent-banner" i]',
+        '[class*="CookieConsent" i]',
+        '#onetrust-banner-sdk',
+        '#CybotCookiebotDialog',
+        '.cc-banner',
+        '.cc-window',
+        '#truste-consent-track',
+        '[aria-label*="cookie" i]',
+        '[data-testid*="cookie" i]',
+      ];
+
+      function tryDismiss() {
+        // Strategy 1: Click known accept buttons
+        var buttons = document.querySelectorAll('button, a[role="button"], [type="submit"], [class*="accept" i], [class*="agree" i], [id*="accept" i]');
+        for (var i = 0; i < buttons.length; i++) {
+          var btn = buttons[i];
+          var text = (btn.innerText || btn.textContent || '').trim();
+          if (text.length > 0 && text.length < 30) {
+            for (var j = 0; j < acceptPatterns.length; j++) {
+              if (acceptPatterns[j].test(text)) {
+                // Check if button is visible
+                var rect = btn.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                  btn.click();
+                  return true;
+                }
+              }
+            }
+          }
+        }
+
+        // Strategy 2: Remove known banner elements
+        for (var k = 0; k < bannerSelectors.length; k++) {
+          var banner = document.querySelector(bannerSelectors[k]);
+          if (banner) {
+            var bRect = banner.getBoundingClientRect();
+            // Only remove if it's a significant overlay (not a tiny element)
+            if (bRect.height > 50) {
+              banner.remove();
+              // Also remove any overlay backdrop
+              var overlays = document.querySelectorAll('[class*="overlay" i][class*="cookie" i], [class*="backdrop" i][class*="cookie" i]');
+              overlays.forEach(function(o) { o.remove(); });
+              return true;
+            }
+          }
+        }
+        return false;
+      }
+
+      // Run after page loads
+      function scheduleCheck() {
+        setTimeout(function() { tryDismiss(); }, 1000);
+        setTimeout(function() { tryDismiss(); }, 2500);
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', scheduleCheck);
+      } else {
+        scheduleCheck();
+      }
+
+      // Watch for dynamically injected banners (common with consent managers)
+      try {
+        var observer = new MutationObserver(function(mutations) {
+          for (var m = 0; m < mutations.length; m++) {
+            var added = mutations[m].addedNodes;
+            for (var n = 0; n < added.length; n++) {
+              var node = added[n];
+              if (node.nodeType === 1) {
+                var id = (node.id || '').toLowerCase();
+                var cls = (node.className || '').toString().toLowerCase();
+                if (id.includes('cookie') || id.includes('consent') || id.includes('gdpr') ||
+                    cls.includes('cookie') || cls.includes('consent') || cls.includes('gdpr')) {
+                  setTimeout(function() { tryDismiss(); }, 500);
+                  return;
+                }
+              }
+            }
+          }
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+
+        // Stop watching after 10 seconds to avoid performance impact
+        setTimeout(function() { observer.disconnect(); }, 10000);
+      } catch(e) {}
+    })();
   `);
 
   let screenshotCount = 0;

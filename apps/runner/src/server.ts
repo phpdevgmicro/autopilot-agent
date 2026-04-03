@@ -219,163 +219,63 @@ export function createServer(options: CreateServerOptions = {}) {
   });
 
   // ── Browser Profile Management ──────────────────────────
-  const profileDir = process.env.CUA_BROWSER_PROFILE_DIR
+  // ── Browser Profile Management ──────────────────────────
+  const baseProfileDir = process.env.CUA_BROWSER_PROFILE_DIR
     ?? join(homedir(), ".autopilot-agent", "browser-profile");
+  
+  const getProfileDir = (name?: string) => join(baseProfileDir, name || "default");
 
-  app.get("/api/browser/profile-status", async () => {
+  app.get("/api/browser/profiles", async () => {
+    try {
+      const { readdir } = await import("node:fs/promises");
+      const entries = await readdir(baseProfileDir, { withFileTypes: true });
+      const ignoreDirs = new Set(["Default", "Crashpad", "Safe Browsing", "component_crx_cache", "GrShaderCache", "GraphiteDawnCache", "ShaderCache", "segmentation_platform"]);
+      const profiles = entries
+        .filter(e => e.isDirectory() && !ignoreDirs.has(e.name))
+        .map(e => e.name);
+      return { profiles: profiles.length ? profiles : ["default"] };
+    } catch {
+      return { profiles: ["default"] };
+    }
+  });
+
+  app.get("/api/browser/profile-status", async (request) => {
+    const query = request.query as { profileName?: string };
+    const pDir = getProfileDir(query.profileName);
     let exists = false;
     try {
-      const s = await stat(profileDir);
+      const s = await stat(pDir);
       exists = s.isDirectory();
     } catch { /* doesn't exist */ }
 
     return {
       persist: process.env.CUA_BROWSER_PERSIST !== "false",
-      profileDir,
+      profileDir: pDir,
       profileExists: exists,
     };
   });
 
-  // Track active remote-login browser on VM
-  let remoteLoginCtx: Awaited<ReturnType<typeof import("playwright").chromium.launchPersistentContext>> | null = null;
+  // Clear browser profile
+  app.post("/api/browser/clear-profile", async (request, reply) => {
+    const { profileName } = (request.body as { profileName?: string }) || {};
+    const pDir = getProfileDir(profileName);
 
-  app.post("/api/browser/connect-profile", async (_request, reply) => {
     if (process.env.CUA_BROWSER_PERSIST === "false") {
       reply.code(400);
       return {
         error: "Browser persistence is disabled",
-        hint: "Set CUA_BROWSER_PERSIST=true in .env to enable persistent profiles.",
-      };
-    }
-
-    const { chromium } = await import("playwright");
-    const { mkdir, unlink } = await import("node:fs/promises");
-
-    try {
-      await mkdir(profileDir, { recursive: true });
-    } catch (err: unknown) {
-      reply.code(500);
-      return {
-        error: "Failed to create profile directory",
-        hint: `Permission denied. Ensure the runner can write to ${profileDir}. Error: ${String(err)}`,
-      };
-    }
-
-    // Clear stale lock files from crashed sessions
-    for (const f of ["SingletonLock", "SingletonCookie", "SingletonSocket"]) {
-      try { await unlink(join(profileDir, f)); } catch { /* fine */ }
-    }
-
-    // Detect headless VM: Linux without a DISPLAY env var
-    const isHeadlessVM = process.platform === "linux" && !process.env.DISPLAY;
-
-    if (isHeadlessVM) {
-      // ── VM mode: headless + remote debugging on port 9222 ──
-      try {
-        if (remoteLoginCtx) {
-          try { await remoteLoginCtx.close(); } catch { /* ok */ }
-          remoteLoginCtx = null;
-        }
-
-        remoteLoginCtx = await chromium.launchPersistentContext(profileDir, {
-          headless: true,
-          args: [
-            "--remote-debugging-port=9222",
-            "--remote-debugging-address=0.0.0.0",
-            "--window-size=1280,900",
-            "--disable-blink-features=AutomationControlled",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--no-sandbox",
-          ],
-          ignoreDefaultArgs: ["--enable-automation"],
-          viewport: { width: 1280, height: 900 },
-        });
-
-        const page = remoteLoginCtx.pages()[0] ?? await remoteLoginCtx.newPage();
-        await page.goto("https://accounts.google.com");
-        console.log("[connect-profile] VM mode: browser on port 9222. SSH tunnel to access.");
-
-        return {
-          status: "launched",
-          mode: "embedded",
-          message: "Login session started. Use the browser viewer to log in.",
-          profileDir,
-        };
-      } catch (err: unknown) {
-        reply.code(500);
-        return { error: "Failed to launch remote browser", hint: String(err) };
-      }
-    } else {
-      // ── Local mode: open headed browser window ──
-      try {
-        chromium.launchPersistentContext(profileDir, {
-          headless: false,
-          args: [
-            "--window-size=1280,900",
-            "--disable-blink-features=AutomationControlled",
-          ],
-          ignoreDefaultArgs: ["--enable-automation"],
-          viewport: { width: 1280, height: 900 },
-          ...(process.env.CUA_BROWSER_CHANNEL ? { channel: process.env.CUA_BROWSER_CHANNEL } : {}),
-        }).then(async (context) => {
-          const page = context.pages()[0] ?? await context.newPage();
-          await page.goto("https://accounts.google.com");
-        }).catch((err) => {
-          console.error("Failed to launch profile window:", err.message);
-        });
-
-        return {
-          status: "launched",
-          mode: "local",
-          message: "Browser window opened. Log in to Google, then close the browser.",
-          profileDir,
-        };
-      } catch (err: unknown) {
-        reply.code(500);
-        return { error: "Failed to launch browser", hint: String(err) };
-      }
-    }
-  });
-
-  // Clear browser profile (for switching accounts)
-  app.post("/api/browser/clear-profile", async (_request, reply) => {
-    if (process.env.CUA_BROWSER_PERSIST === "false") {
-      reply.code(400);
-      return {
-        error: "Browser persistence is disabled",
-        hint: "Set CUA_BROWSER_PERSIST=true in .env to enable persistent profiles.",
       };
     }
 
     const { rm } = await import("node:fs/promises");
 
-    // Close any active remote login session first
-    if (remoteLoginCtx) {
-      try { await remoteLoginCtx.close(); } catch { /* ok */ }
-      remoteLoginCtx = null;
-    }
-
     try {
-      await rm(profileDir, { recursive: true, force: true });
-      console.log(`[clear-profile] Cleared profile at ${profileDir}`);
-      return { status: "cleared", message: "Browser profile cleared. Ready for re-login.", profileDir };
+      await rm(pDir, { recursive: true, force: true });
+      return { status: "cleared", message: `Browser profile '${profileName || "default"}' cleared.` };
     } catch (err: unknown) {
       reply.code(500);
       return { error: "Failed to clear profile", hint: String(err) };
     }
-  });
-
-  // Close remote login browser and save profile (VM only)
-  app.post("/api/browser/finish-profile-login", async () => {
-    if (remoteLoginCtx) {
-      try { await remoteLoginCtx.close(); } catch { /* ok */ }
-      remoteLoginCtx = null;
-      return { status: "saved", message: "Profile saved. Ready to use." };
-    }
-    return { status: "no_session" };
   });
 
   // ── Import cookies from local browser login ───────────
@@ -385,7 +285,7 @@ export function createServer(options: CreateServerOptions = {}) {
       return { error: "Browser persistence is disabled" };
     }
 
-    const { cookies, source } = request.body as {
+    const { cookies, source, profileName } = request.body as {
       cookies: Array<{
         name: string;
         value: string;
@@ -398,6 +298,7 @@ export function createServer(options: CreateServerOptions = {}) {
       }>;
       localStorage?: Record<string, string>;
       source?: string;
+      profileName?: string;
     };
 
     if (!cookies || !Array.isArray(cookies) || cookies.length === 0) {
@@ -407,13 +308,15 @@ export function createServer(options: CreateServerOptions = {}) {
 
     const { mkdir, writeFile } = await import("node:fs/promises");
     const { chromium } = await import("playwright");
+    
+    const pDir = getProfileDir(profileName);
 
     try {
-      await mkdir(profileDir, { recursive: true });
+      await mkdir(pDir, { recursive: true });
 
       // Launch a temporary browser context to import cookies
       // This ensures they're stored in the proper Chromium profile format
-      const ctx = await chromium.launchPersistentContext(profileDir, {
+      const ctx = await chromium.launchPersistentContext(pDir, {
         headless: true,
         args: ["--no-first-run", "--no-default-browser-check", "--disable-gpu", "--no-sandbox"],
         ignoreDefaultArgs: ["--enable-automation"],
@@ -440,7 +343,7 @@ export function createServer(options: CreateServerOptions = {}) {
       await ctx.close();
 
       // Also save cookies as a backup JSON file
-      const backupPath = join(profileDir, "imported-cookies.json");
+      const backupPath = join(pDir, "imported-cookies.json");
       await writeFile(backupPath, JSON.stringify({ cookies, source, importedAt: new Date().toISOString() }, null, 2));
 
       const imported = cookies.length;

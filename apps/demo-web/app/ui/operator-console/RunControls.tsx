@@ -17,9 +17,16 @@ type RunControlsProps = ActionButtonsProps & {
   startUrl: string;
 };
 
-export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string }) {
+type ConnectProfileProps = {
+  runnerBaseUrl: string;
+  selectedProfile?: string;
+  onProfileChange?: (p: string) => void;
+};
+
+export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfileChange }: ConnectProfileProps) {
   const [status, setStatus] = useState<"loading" | "connected" | "not-connected" | "disabled">("loading");
-  const [action, setAction] = useState<"idle" | "connecting" | "switching" | "finishing">("idle");
+  const [profiles, setProfiles] = useState<string[]>([]);
+  const [action, setAction] = useState<"idle" | "switching" | "clearing">("idle");
   const [menuOpen, setMenuOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -27,21 +34,42 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
 
   const checkStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${runnerBaseUrl}/api/browser/profile-status`);
+      // Check if persistence is enabled by checking one of the profiles (or fallback)
+      const res = await fetch(`${runnerBaseUrl}/api/browser/profile-status?profileName=${selectedProfile || "default"}`);
       const data = await res.json();
       if (!data.persist) {
         setStatus("disabled");
+        return;
+      }
+      
+      const profilesRes = await fetch(`${runnerBaseUrl}/api/browser/profiles`);
+      const profilesData = await profilesRes.json();
+      setProfiles(profilesData.profiles || ["default"]);
+      
+      if (!selectedProfile && profilesData.profiles?.length > 0) {
+        let defaultOrFirst = profilesData.profiles.includes("default") ? "default" : profilesData.profiles[0];
+        // prefer a non-default profile if available
+        if (profilesData.profiles.length > 1) {
+          defaultOrFirst = profilesData.profiles.find((p: string) => p !== "default") || defaultOrFirst;
+        }
+        onProfileChange?.(defaultOrFirst);
+      }
+      
+      // Assume "connected" if the currently selected profile is NOT "default", OR if it exists.
+      // Wait, we just trust the profile list.
+      if (profilesData.profiles?.includes(selectedProfile || "default")) {
+        setStatus((selectedProfile && selectedProfile !== "default") ? "connected" : "not-connected");
       } else {
-        setStatus(data.profileExists ? "connected" : "not-connected");
+         setStatus("not-connected");
       }
     } catch {
       setStatus("not-connected");
     }
-  }, [runnerBaseUrl]);
+  }, [runnerBaseUrl, selectedProfile, onProfileChange]);
 
   useEffect(() => {
     void checkStatus();
-  }, [checkStatus]);
+  }, [checkStatus, menuOpen]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -62,11 +90,16 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
   };
 
   const handleClearProfile = async () => {
-    setAction("switching");
+    setAction("clearing");
     setMenuOpen(false);
     try {
-      await fetch(`${runnerBaseUrl}/api/browser/clear-profile`, { method: "POST" });
+      await fetch(`${runnerBaseUrl}/api/browser/clear-profile`, { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ profileName: selectedProfile })
+      });
       showMessage("Profile cleared from server.");
+      onProfileChange?.("default");
     } catch {
       showMessage("Failed to clear profile.");
     }
@@ -78,11 +111,18 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
 
   const busy = action !== "idle";
   const dotColor = status === "connected" ? "#22c55e" : "#ef4444";
+  
+  // Show the actual email on the pill (truncate if too long)
+  const profileDisplayName = selectedProfile && selectedProfile !== "default"
+    ? selectedProfile.replace(/@gmail\.com$/, "")
+    : null;
+  
   const label =
     action === "connecting" ? "Connecting…" :
     action === "switching" ? "Switching…" :
     action === "finishing" ? "Saving…" :
-    status === "connected" ? "Google Profile Linked" : "No Profile Session";
+    status === "connected" && profileDisplayName ? profileDisplayName : 
+    status === "connected" ? "Profile Linked" : "No Profile";
 
   return (
     <div className="profileDropdownWrapper" ref={menuRef}>
@@ -93,7 +133,7 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
         disabled={busy}
       >
         <span className="profilePillDot" style={{ background: dotColor }} />
-        <span className="profilePillLabel">{label}</span>
+        <span className="profilePillLabel">{status === "connected" ? label : "Select Profile"}</span>
         <svg className={`profilePillChevron ${menuOpen ? "profilePillChevronOpen" : ""}`} width="10" height="10" viewBox="0 0 10 10" fill="none">
           <path d="M2.5 3.75L5 6.25L7.5 3.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
@@ -103,40 +143,59 @@ export function ConnectProfileButton({ runnerBaseUrl }: { runnerBaseUrl: string 
         <div className="profileDropdownMenu">
           <div className="profileDropdownHeader">
             <span className="profileDropdownDot" style={{ background: dotColor }} />
-            <span>{status === "connected" ? "Profile Active" : "No Profile"}</span>
+            <span>Select Active Profile</span>
           </div>
 
-          {status !== "connected" ? (
-            <>
-              <div className="profileDropdownHint" style={{ padding: "12px", textAlign: "center", borderTop: "none" }}>
-                <span style={{ fontSize: "16px", display: "block", marginBottom: "8px" }}>🧩</span>
-                <b>Account Not Linked</b><br/><br/>
-                Click the <b>Agent John Wick</b> Chrome Extension in your browser toolbar to sync your active session.
-              </div>
-              <a 
-                href="/agent-john-wick-extension.zip" 
-                download
-                className="profileDropdownItem" 
-                style={{ justifyContent: "center", color: "#60a5fa", fontWeight: 500, borderTop: "1px solid rgba(255,255,255,0.06)", textDecoration: "none" }}
+          <div style={{ padding: "8px" }}>
+            {profiles.map(p => (
+              <button 
+                key={p}
+                className={`profileDropdownItem ${selectedProfile === p ? 'active' : ''}`}
+                onClick={() => {
+                  onProfileChange?.(p);
+                  setMenuOpen(false);
+                }}
+                style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "flex-start", gap: "8px", opacity: selectedProfile === p ? 1 : 0.7 }}
+              >
+                <span style={{ width: "16px", flexShrink: 0, textAlign: "center" }}>
+                  {selectedProfile === p ? '✓' : ''}
+                </span>
+                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {p === "default" ? "Guest (No Account)" : p}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+            <a 
+              href="/agent-john-wick-extension.zip" 
+              download
+              title="Download Extension"
+              className="profileDropdownItem"
+              style={{ flex: 1, justifyContent: "center", color: "#60a5fa", gap: "6px", fontSize: "0.8rem", padding: "10px", textDecoration: "none" }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="7 10 12 15 17 10"></polyline>
+                <line x1="12" y1="15" x2="12" y2="3"></line>
+              </svg>
+              Extension
+            </a>
+            {status === "connected" && (
+              <button 
+                className="profileDropdownItem"
+                onClick={() => void handleClearProfile()} 
+                title="Disconnect selected profile"
+                style={{ flex: 1, justifyContent: "center", color: "#f87171", borderLeft: "1px solid rgba(255,255,255,0.06)", gap: "6px", fontSize: "0.8rem", padding: "10px", background: "transparent" }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                  <polyline points="7 10 12 15 17 10"></polyline>
-                  <line x1="12" y1="15" x2="12" y2="3"></line>
+                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line>
                 </svg>
-                Download Extension (.zip)
-              </a>
-            </>
-          ) : (
-            <>
-              <button className="profileDropdownItem profileDropdownItemSwitch" onClick={() => void handleClearProfile()}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                   <path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line>
-                </svg>
-                Disconnect & Clear Profile
+                Disconnect
               </button>
-            </>
-          )}
+            )}
+          </div>
         </div>
       )}
 

@@ -1083,6 +1083,22 @@ async function executeFunctionToolCall(
   return output;
 }
 
+/** Emoji icon for each action type */
+function actionEmoji(actionType: string): string {
+  switch (actionType) {
+    case "click":        return "🖱️";
+    case "double_click": return "🖱️🖱️";
+    case "type":         return "⌨️";
+    case "keypress":     return "⌨️";
+    case "scroll":       return "📜";
+    case "drag":         return "✋";
+    case "move":         return "↗️";
+    case "wait":         return "⏳";
+    case "screenshot":   return "📸";
+    default:             return "▶️";
+  }
+}
+
 async function executeComputerAction(
   input: ResponsesLoopContext,
   action: ComputerAction,
@@ -1097,6 +1113,16 @@ async function executeComputerAction(
         : "left";
   const x = Number(action.x ?? 0);
   const y = Number(action.y ?? 0);
+
+  // ── Per-action micro-event ──
+  const emoji = actionEmoji(action.type);
+  const desc = describeComputerAction(action);
+  await input.context.emitEvent({
+    detail: desc,
+    level: "ok",
+    message: `${emoji} ${desc}`,
+    type: "run_progress",
+  });
 
   switch (action.type) {
     case "click": {
@@ -1197,6 +1223,50 @@ async function executeComputerAction(
 
   if (action.type !== "wait" && action.type !== "screenshot") {
     await delay(defaultInterActionDelayMs, input.context.signal);
+  }
+}
+
+/** Detect and emit navigation events when the page URL changes */
+async function emitNavigationIfChanged(
+  input: ResponsesLoopContext,
+  urlBefore: string,
+) {
+  try {
+    const urlAfter = input.session.page.url();
+    if (urlAfter && urlAfter !== urlBefore && urlAfter !== "about:blank") {
+      const fromHost = new URL(urlBefore).hostname;
+      const toHost = new URL(urlAfter).hostname;
+      const crossSite = fromHost !== toHost;
+      await input.context.emitEvent({
+        detail: `${urlBefore} → ${urlAfter}`,
+        level: "ok",
+        message: crossSite
+          ? `🔗 Navigation: ${fromHost} → ${toHost}`
+          : `🔗 Navigated to ${urlAfter.length > 80 ? urlAfter.slice(0, 77) + "..." : urlAfter}`,
+        type: "run_progress",
+      });
+    }
+  } catch {
+    // Page may have closed — ignore
+  }
+}
+
+/** Emit page context (URL + title) before a model call */
+async function emitPageContext(
+  input: ResponsesLoopContext,
+  turn: number,
+) {
+  try {
+    const url = input.session.page.url();
+    const title = await input.session.page.title().catch(() => "Untitled");
+    await input.context.emitEvent({
+      detail: `${title} — ${url}`,
+      level: "ok",
+      message: `📍 Page context (turn ${turn}): ${title}`,
+      type: "run_progress",
+    });
+  } catch {
+    // Page may not be ready
   }
 }
 
@@ -1324,6 +1394,9 @@ export async function runResponsesCodeLoop(
 
   for (let turn = 1; turn <= currentBudget; turn += 1) {
     assertActive(input.context.signal);
+
+    // Emit page context before model call
+    await emitPageContext(input, turn);
 
     // Micro-event: signal that we're waiting for the model
     await input.context.emitEvent({
@@ -1534,6 +1607,9 @@ export async function runResponsesNativeComputerLoop(
     lastTurn = turn;
     assertActive(input.context.signal);
 
+    // Emit page context before model call
+    await emitPageContext(input, turn);
+
     // Micro-event: signal that we're waiting for the model
     await input.context.emitEvent({
       detail: `Turn ${turn}/${currentBudget} · Awaiting model response... (ceiling: ${hardCeiling})`,
@@ -1624,16 +1700,12 @@ export async function runResponsesNativeComputerLoop(
         type: "computer_call_requested",
       });
 
+      // Capture URL before actions for navigation detection
+      const urlBeforeActions = input.session.page.url();
+
       for (let ai = 0; ai < actions.length; ai++) {
         const action = actions[ai]!;
-        const actionDesc = describeComputerAction(action);
-        // Micro-event: per-action progress
-        await input.context.emitEvent({
-          detail: `Action ${ai + 1}/${actions.length}: ${actionDesc}`,
-          level: "pending",
-          message: `Executing: ${actionDesc}`,
-          type: "run_progress",
-        });
+        // executeComputerAction now emits per-action micro-events internally
         await executeComputerAction(input, action);
       }
 
@@ -1643,6 +1715,9 @@ export async function runResponsesNativeComputerLoop(
       } catch {
         // Timeout is fine — some pages (SPAs, streams) never reach idle
       }
+
+      // ── Navigation Detection ──
+      await emitNavigationIfChanged(input, urlBeforeActions);
 
       await input.context.emitEvent({
         detail: formatActionBatchDetail(actions),

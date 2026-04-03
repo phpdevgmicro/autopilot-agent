@@ -6,6 +6,8 @@ type ConsoleTopbarProps = {
   runnerBaseUrl: string;
   runnerOnline: boolean;
   stageHeadline: string;
+  selectedProfile?: string;
+  onProfileChange?: (p: string) => void;
 };
 
 import { ConnectProfileButton } from "./RunControls";
@@ -14,6 +16,8 @@ export function ConsoleTopbar({
   runnerBaseUrl,
   runnerOnline,
   stageHeadline,
+  selectedProfile,
+  onProfileChange,
 }: ConsoleTopbarProps) {
   return (
     <header className="consoleTopbar">
@@ -26,7 +30,11 @@ export function ConsoleTopbar({
         </div>
       </div>
       <div className="statusCluster" style={{ gap: '16px' }}>
-        <ConnectProfileButton runnerBaseUrl={runnerBaseUrl} />
+        <ConnectProfileButton
+          runnerBaseUrl={runnerBaseUrl}
+          selectedProfile={selectedProfile}
+          onProfileChange={onProfileChange}
+        />
         <div className="topbarStatusPill" style={{ background: 'rgba(255, 255, 255, 0.04)', padding: '6px 14px', borderRadius: '16px' }}>
           {stageHeadline}
         </div>
