@@ -144,6 +144,10 @@ export async function launchBrowserSession(
     "--no-sandbox",
     "--password-store=basic",
     "--use-mock-keychain",
+    // Suppress Chrome password/credential popups that obstruct the agent
+    "--disable-save-password-bubble",
+    "--disable-features=PasswordManager,TranslateUI",
+    "--disable-translate",
   ];
 
   let browser: Browser | null = null;
