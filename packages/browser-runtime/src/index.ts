@@ -120,7 +120,8 @@ export async function launchBrowserSession(
 
   // ── Stealth Chromium flags ────────────────────────────────────────
   // These remove automation indicators that Cloudflare/bot-detection services check.
-  const stealthArgs = [
+  // Split into shared (always) and mode-specific (persistent vs ephemeral).
+  const sharedStealthArgs = [
     `--window-size=${viewport.width},${viewport.height}`,
     // Core stealth: remove automation-controlled signals
     "--disable-blink-features=AutomationControlled",
@@ -131,25 +132,36 @@ export async function launchBrowserSession(
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
-    // Disable features that leak automation signals or obstruct the agent
-    // NOTE: PasswordManager is ENABLED (not listed here) so Chrome saves/autofills credentials
-    "--disable-features=IsolateOrigins,site-per-process,TranslateUI",
     // GPU stability (prevent screenshot crashes)
     "--disable-gpu",
     "--disable-software-rasterizer",
     "--disable-dev-shm-usage",
-    // Anti-bot: mimic a real Chrome install
-    "--disable-component-extensions-with-background-pages",
+    // Anti-bot basics
     "--disable-default-apps",
-    "--disable-extensions",
     "--hide-scrollbars",
     "--mute-audio",
     "--no-sandbox",
-    "--password-store=basic",
-    "--use-mock-keychain",
-    // Suppress the "Save password?" bubble popup (PasswordManager stays active for autofill)
+    // Suppress popups that obstruct the agent
     "--disable-save-password-bubble",
     "--disable-translate",
+  ];
+
+  // Persistent profile: ENABLE extensions + real password store for Google Sync & autofill
+  const persistentArgs = [
+    ...sharedStealthArgs,
+    // Google Password Manager & Sync require the real password store + extensions
+    // DO NOT add --disable-extensions or --password-store=basic here!
+    "--disable-features=IsolateOrigins,site-per-process,TranslateUI",
+  ];
+
+  // Ephemeral profile: full lockdown — no extensions, no password store, no sync
+  const ephemeralArgs = [
+    ...sharedStealthArgs,
+    "--disable-component-extensions-with-background-pages",
+    "--disable-extensions",
+    "--password-store=basic",
+    "--use-mock-keychain",
+    "--disable-features=IsolateOrigins,site-per-process,TranslateUI,PasswordManager",
   ];
 
   let browser: Browser | null = null;
@@ -190,7 +202,7 @@ export async function launchBrowserSession(
     }
 
     context = await chromium.launchPersistentContext(profileDir, {
-      args: stealthArgs,
+      args: persistentArgs,
       headless: options.browserMode === "headless",
       viewport,
       locale,
@@ -204,7 +216,7 @@ export async function launchBrowserSession(
   } else {
     // Ephemeral context — clean Chromium each time (original behavior)
     browser = await chromium.launch({
-      args: stealthArgs,
+      args: ephemeralArgs,
       headless: options.browserMode === "headless",
       ...(browserChannel ? { channel: browserChannel } : {}),
     });
