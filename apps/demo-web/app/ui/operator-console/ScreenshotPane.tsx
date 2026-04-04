@@ -130,32 +130,47 @@ export function ScreenshotPane({
             />
           ) : (
             <div className="stagePlaceholder">
-              <div className="scopeContainer">
-                {/* Outer scope ring */}
-                <svg className="scopeRing" viewBox="0 0 120 120" fill="none">
-                  {/* Rotating outer ring with tick marks */}
-                  <circle cx="60" cy="60" r="54" stroke="rgba(96, 165, 250, 0.15)" strokeWidth="1" />
-                  <circle cx="60" cy="60" r="44" stroke="rgba(96, 165, 250, 0.1)" strokeWidth="0.5" strokeDasharray="4 8" />
-                  {/* Crosshair lines */}
-                  <line x1="60" y1="6" x2="60" y2="30" stroke="rgba(96, 165, 250, 0.3)" strokeWidth="1" />
-                  <line x1="60" y1="90" x2="60" y2="114" stroke="rgba(96, 165, 250, 0.3)" strokeWidth="1" />
-                  <line x1="6" y1="60" x2="30" y2="60" stroke="rgba(96, 165, 250, 0.3)" strokeWidth="1" />
-                  <line x1="90" y1="60" x2="114" y2="60" stroke="rgba(96, 165, 250, 0.3)" strokeWidth="1" />
-                  {/* Tick marks at 45° angles */}
-                  <line x1="18" y1="18" x2="26" y2="26" stroke="rgba(96, 165, 250, 0.15)" strokeWidth="0.8" />
-                  <line x1="94" y1="18" x2="102" y2="26" stroke="rgba(96, 165, 250, 0.15)" strokeWidth="0.8" />
-                  <line x1="18" y1="94" x2="26" y2="102" stroke="rgba(96, 165, 250, 0.15)" strokeWidth="0.8" />
-                  <line x1="94" y1="94" x2="102" y2="102" stroke="rgba(96, 165, 250, 0.15)" strokeWidth="0.8" />
-                  {/* Small center square */}
-                  <rect x="55" y="55" width="10" height="10" stroke="rgba(96, 165, 250, 0.4)" strokeWidth="1" fill="none" />
-                </svg>
-                {/* Pulsing center dot */}
-                <div className="scopeCenterDot" />
-                {/* Rotating scanner line */}
-                <div className="scopeScanner" />
+              <div className="browserEmptyState">
+                {/* Browser window outline icon */}
+                <div className="browserEmptyIcon">
+                  <svg width="64" height="56" viewBox="0 0 64 56" fill="none">
+                    {/* Browser window frame */}
+                    <rect x="2" y="2" width="60" height="52" rx="6" stroke="rgba(96, 165, 250, 0.35)" strokeWidth="1.5" />
+                    {/* Title bar area */}
+                    <line x1="2" y1="14" x2="62" y2="14" stroke="rgba(96, 165, 250, 0.2)" strokeWidth="1" />
+                    {/* Dots in title bar */}
+                    <circle cx="12" cy="8" r="2" fill="rgba(239, 68, 68, 0.5)" />
+                    <circle cx="20" cy="8" r="2" fill="rgba(234, 179, 8, 0.5)" />
+                    <circle cx="28" cy="8" r="2" fill="rgba(34, 197, 94, 0.5)" />
+                    {/* Address bar outline in title bar */}
+                    <rect x="34" y="5" width="22" height="6" rx="3" stroke="rgba(96, 165, 250, 0.15)" strokeWidth="0.8" fill="none" />
+                    {/* Content placeholder lines */}
+                    <rect x="10" y="22" width="44" height="3" rx="1.5" fill="rgba(96, 165, 250, 0.08)" />
+                    <rect x="10" y="30" width="32" height="3" rx="1.5" fill="rgba(96, 165, 250, 0.06)" />
+                    <rect x="10" y="38" width="38" height="3" rx="1.5" fill="rgba(96, 165, 250, 0.05)" />
+                  </svg>
+                  {/* Glow behind icon */}
+                  <div className="browserEmptyGlow" />
+                </div>
+
+                <h3 className="browserEmptyTitle">Agent Browser</h3>
+                <p className="browserEmptyDesc">
+                  The agent&apos;s live browser view will appear here during task execution.
+                </p>
+
+                {/* Feature chips */}
+                <div className="browserFeatureChips">
+                  <span className="browserChip">
+                    <span className="browserChipIcon">🛡️</span> Stealth Mode
+                  </span>
+                  <span className="browserChip">
+                    <span className="browserChipIcon">🍪</span> Cookie Auto-Dismiss
+                  </span>
+                  <span className="browserChip">
+                    <span className="browserChipIcon">🔗</span> Nav Tracking
+                  </span>
+                </div>
               </div>
-              <h3>{emptyReviewHeading}</h3>
-              <p>{emptyReviewMessage}</p>
             </div>
           )}
         </div>
