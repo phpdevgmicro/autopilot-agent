@@ -273,7 +273,7 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
           </div>
         </div>
 
-        {/* ── AI Summary (Primary Content) ── */}
+        {/* ── AI Summary (Primary) — falls back to Agent Conclusion if no AI walkthrough ── */}
         {aiSummary ? (
           <div className="summaryAiCard">
             <div className="summaryAiHeader">
@@ -284,6 +284,16 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
               {renderAiContent(maskCredentials(aiSummary))}
             </div>
           </div>
+        ) : agentConclusion ? (
+          <div className="summaryAiCard">
+            <div className="summaryAiHeader">
+              <span className="summaryAiIcon">🤖</span>
+              <span className="summaryAiTitle">{appName}</span>
+            </div>
+            <div className="summaryAiBody">
+              {renderAiContent(maskCredentials(agentConclusion))}
+            </div>
+          </div>
         ) : isGeneratingAi ? (
           <div className="summaryAiCard summaryAiCardLoading">
             <div className="summaryAiHeader">
@@ -292,16 +302,6 @@ export function WalkthroughSummary({ runEvents, runnerBaseUrl, screenshots, sele
             </div>
             <div className="summaryAiBody">
               <p className="summaryAiPulse">Analyzing agent activity and generating summary...</p>
-            </div>
-          </div>
-        ) : null}
-
-        {/* ── Agent's Own Conclusion ── */}
-        {agentConclusion ? (
-          <div className="summarySectionCard">
-            <h3 className="summarySectionTitle">💡 Agent Conclusion</h3>
-            <div className="summaryAiBody">
-              {renderAiContent(maskCredentials(agentConclusion))}
             </div>
           </div>
         ) : null}
