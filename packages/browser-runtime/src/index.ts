@@ -146,11 +146,14 @@ export async function launchBrowserSession(
     "--disable-translate",
   ];
 
-  // Persistent profile: ENABLE extensions + real password store for Google Sync & autofill
+  // Persistent profile: ENABLE extensions for Google Password Manager, but keep
+  // --password-store=basic for headless Linux servers (no system keychain available).
   const persistentArgs = [
     ...sharedStealthArgs,
-    // Google Password Manager & Sync require the real password store + extensions
-    // DO NOT add --disable-extensions or --password-store=basic here!
+    // Required on headless Linux — without this, Chrome can't decrypt cookies/sessions
+    "--password-store=basic",
+    "--use-mock-keychain",
+    // Extensions ENABLED (no --disable-extensions) so Google Password Manager works
     "--disable-features=IsolateOrigins,site-per-process,TranslateUI",
   ];
 
