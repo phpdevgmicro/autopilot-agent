@@ -146,14 +146,15 @@ export async function launchBrowserSession(
     "--disable-translate",
   ];
 
-  // Persistent profile: ENABLE extensions for Google Password Manager, but keep
-  // --password-store=basic for headless Linux servers (no system keychain available).
+  // Persistent profile: locked down like ephemeral but keeps cookies + sessions.
+  // Chrome's native autofill doesn't work in Playwright, so we use our own
+  // credential vault system (credentials.json + auto-fill init script).
   const persistentArgs = [
     ...sharedStealthArgs,
-    // Required on headless Linux — without this, Chrome can't decrypt cookies/sessions
+    "--disable-component-extensions-with-background-pages",
+    "--disable-extensions",
     "--password-store=basic",
     "--use-mock-keychain",
-    // Extensions ENABLED (no --disable-extensions) so Google Password Manager works
     "--disable-features=IsolateOrigins,site-per-process,TranslateUI",
   ];
 
@@ -472,6 +473,120 @@ export async function launchBrowserSession(
       } catch(e) {}
     })();
   `);
+
+  // ── Credential Auto-Fill System ───────────────────────────────────
+  // Reads saved credentials from the profile directory and auto-fills
+  // login forms when the agent visits matching sites.
+  // This replaces Chrome's native autofill (which doesn't work in Playwright).
+  if (usePersistentProfile) {
+    const credentialsPath = path.join(profileDir, "credentials.json");
+    let credentials: Array<{ domain: string; username: string; password: string }> = [];
+    try {
+      const raw = await readFile(credentialsPath, "utf-8");
+      credentials = JSON.parse(raw);
+      console.log(`[browser-runtime] 🔑 Loaded ${credentials.length} saved credential(s)`);
+    } catch {
+      // No credentials file yet — will be created when agent saves first credential
+    }
+
+    if (credentials.length > 0) {
+      // Inject auto-fill script with credentials for matching domains
+      const credMap = JSON.stringify(
+        credentials.map(c => ({
+          d: c.domain,
+          u: c.username,
+          p: c.password,
+        }))
+      );
+
+      await context.addInitScript(`
+        (function() {
+          var creds = ${credMap};
+          var hostname = window.location.hostname;
+
+          // Find matching credential for current domain
+          var match = null;
+          for (var i = 0; i < creds.length; i++) {
+            if (hostname.includes(creds[i].d) || hostname === creds[i].d) {
+              match = creds[i];
+              break;
+            }
+          }
+          if (!match) return;
+
+          function tryAutoFill() {
+            // Find email/username field
+            var userField = document.querySelector(
+              'input[type="email"], input[name*="email" i], input[name*="user" i], ' +
+              'input[name*="login" i], input[id*="email" i], input[id*="user" i], ' +
+              'input[autocomplete="email"], input[autocomplete="username"]'
+            );
+            // Find password field
+            var passField = document.querySelector(
+              'input[type="password"], input[name*="pass" i], input[id*="pass" i]'
+            );
+
+            if (userField && passField) {
+              // Fill using native setter to trigger React/Vue change events
+              var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value'
+              ).set;
+
+              nativeInputValueSetter.call(userField, match.u);
+              userField.dispatchEvent(new Event('input', { bubbles: true }));
+              userField.dispatchEvent(new Event('change', { bubbles: true }));
+
+              nativeInputValueSetter.call(passField, match.p);
+              passField.dispatchEvent(new Event('input', { bubbles: true }));
+              passField.dispatchEvent(new Event('change', { bubbles: true }));
+
+              console.log('[autofill] ✅ Credentials filled for ' + hostname);
+              return true;
+            }
+            return false;
+          }
+
+          // Try filling after page loads (login forms may load dynamically)
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+              setTimeout(tryAutoFill, 500);
+              setTimeout(tryAutoFill, 1500);
+            });
+          } else {
+            setTimeout(tryAutoFill, 300);
+            setTimeout(tryAutoFill, 1000);
+          }
+        })();
+      `);
+    }
+
+    // Expose save_credentials function via a page handler
+    // Agent can call: await page.evaluate(() => window.__saveCredentials(domain, username, password))
+    context.exposeFunction("__saveCredentials", async (domain: string, username: string, password: string) => {
+      try {
+        let existing: Array<{ domain: string; username: string; password: string }> = [];
+        try {
+          const raw = await readFile(credentialsPath, "utf-8");
+          existing = JSON.parse(raw);
+        } catch { /* no file yet */ }
+
+        // Update existing or add new
+        const idx = existing.findIndex(c => c.domain === domain);
+        if (idx >= 0) {
+          existing[idx] = { domain, username, password };
+        } else {
+          existing.push({ domain, username, password });
+        }
+
+        await writeFile(credentialsPath, JSON.stringify(existing, null, 2), "utf-8");
+        console.log(`[browser-runtime] 💾 Saved credentials for ${domain}`);
+        return true;
+      } catch (e) {
+        console.error(`[browser-runtime] ❌ Failed to save credentials:`, e);
+        return false;
+      }
+    });
+  }
 
   let screenshotCount = 0;
 
