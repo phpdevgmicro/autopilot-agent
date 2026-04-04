@@ -1,5 +1,6 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import path from "node:path";
 import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 
@@ -130,7 +131,9 @@ export async function launchBrowserSession(
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
-    "--disable-features=IsolateOrigins,site-per-process",
+    // Disable features that leak automation signals or obstruct the agent
+    // NOTE: PasswordManager is ENABLED (not listed here) so Chrome saves/autofills credentials
+    "--disable-features=IsolateOrigins,site-per-process,TranslateUI",
     // GPU stability (prevent screenshot crashes)
     "--disable-gpu",
     "--disable-software-rasterizer",
@@ -144,9 +147,8 @@ export async function launchBrowserSession(
     "--no-sandbox",
     "--password-store=basic",
     "--use-mock-keychain",
-    // Suppress Chrome password/credential popups that obstruct the agent
+    // Suppress the "Save password?" bubble popup (PasswordManager stays active for autofill)
     "--disable-save-password-bubble",
-    "--disable-features=PasswordManager,TranslateUI",
     "--disable-translate",
   ];
 
@@ -157,6 +159,36 @@ export async function launchBrowserSession(
   if (usePersistentProfile) {
     // Persistent context — keeps cookies, login, profile data across runs
     await mkdir(profileDir, { recursive: true });
+
+    // ── Inject Chrome preferences for silent password saving ──────────
+    // This tells Chrome to auto-save passwords without showing the bubble/prompt.
+    // Works because we use a persistent profile with real Chrome channel.
+    const prefsDir = path.join(profileDir, "Default");
+    const prefsPath = path.join(prefsDir, "Preferences");
+    try {
+      await mkdir(prefsDir, { recursive: true });
+      let prefs: Record<string, unknown> = {};
+      try {
+        const existing = await readFile(prefsPath, "utf-8");
+        prefs = JSON.parse(existing);
+      } catch {
+        // No existing prefs file — start fresh
+      }
+      // Enable password manager & autofill without prompts
+      const profile = (prefs["profile"] as Record<string, unknown>) ?? {};
+      profile["password_manager_enabled"] = true;
+      prefs["profile"] = profile;
+      prefs["credentials_enable_service"] = true;
+      prefs["credentials_enable_autofill"] = true;
+      // Suppress the "Save password?" infobar
+      const passwordManager = (prefs["password_manager"] as Record<string, unknown>) ?? {};
+      passwordManager["saving_enabled"] = true;
+      prefs["password_manager"] = passwordManager;
+      await writeFile(prefsPath, JSON.stringify(prefs, null, 2), "utf-8");
+    } catch {
+      // Non-critical — agent works without prefs, just won't auto-save passwords
+    }
+
     context = await chromium.launchPersistentContext(profileDir, {
       args: stealthArgs,
       headless: options.browserMode === "headless",
