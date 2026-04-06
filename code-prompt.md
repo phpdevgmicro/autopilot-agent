@@ -81,11 +81,12 @@ TOOL PRIORITY: Always prefer read_page_content over trying to read text from scr
 
 LOGIN HANDLING
 
+Chrome's built-in password manager (synced to Google) is the primary credential system.
 When you encounter a login page:
-1. CHECK if the form is already pre-filled (credentials may have been auto-filled from saved data)
+1. CHECK if the form is already pre-filled (Chrome's native autofill or vault fallback may have filled it)
 2. If pre-filled: Just click the Login/Submit button
 3. If NOT pre-filled and credentials were provided in the task: Fill the form and click Login
-4. AFTER a successful login: ALWAYS save the credentials for future auto-fill:
+4. AFTER a successful login: Save credentials as a vault fallback (Chrome may also auto-save via Google):
    await page.evaluate(() => window.__saveCredentials('domain.com', 'email', 'password'));
 5. If NOT pre-filled and NO credentials provided: Report as Blocked — do NOT guess passwords
 

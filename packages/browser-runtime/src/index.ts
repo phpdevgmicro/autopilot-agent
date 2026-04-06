@@ -4,6 +4,8 @@ import path from "node:path";
 import { homedir } from "node:os";
 import { pathToFileURL } from "node:url";
 
+import { loadCredentials, upsertCredential } from "./credential-vault.js";
+
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
 import { type BrowserMode, type BrowserViewport, type StartTarget } from "@cua-sample/replay-schema";
@@ -141,26 +143,29 @@ export async function launchBrowserSession(
     "--hide-scrollbars",
     "--mute-audio",
     "--no-sandbox",
-    // Suppress popups that obstruct the agent
-    "--disable-save-password-bubble",
+    // Suppress popups that obstruct the agent (NOT password bubble — that's mode-specific)
     "--disable-translate",
   ];
 
-  // Persistent profile: locked down like ephemeral but keeps cookies + sessions.
-  // Chrome's native autofill doesn't work in Playwright, so we use our own
-  // credential vault system (credentials.json + auto-fill init script).
+  // Persistent profile: Google profile is the single source of truth for passwords.
+  // Chrome's native password manager + Google Sync handles save/fill automatically.
+  // The encrypted vault (credential-vault.ts) is a fallback for non-Google setups.
   const persistentArgs = [
     ...sharedStealthArgs,
     "--disable-component-extensions-with-background-pages",
-    "--disable-extensions",
-    "--password-store=basic",
-    "--use-mock-keychain",
+    // NO --disable-extensions: allow Chrome's built-in password manager extension
+    // NO --password-store=basic: let Chrome use the real OS credential store
+    // NO --use-mock-keychain: let Chrome use the real keychain
+    // NO --disable-save-password-bubble: let Chrome offer to save passwords
     "--disable-features=IsolateOrigins,site-per-process,TranslateUI",
+    // Enable sync-related features for Google password sync
+    "--enable-features=PasswordImport,PasswordExport",
   ];
 
   // Ephemeral profile: full lockdown — no extensions, no password store, no sync
   const ephemeralArgs = [
     ...sharedStealthArgs,
+    "--disable-save-password-bubble",
     "--disable-component-extensions-with-background-pages",
     "--disable-extensions",
     "--password-store=basic",
@@ -176,9 +181,10 @@ export async function launchBrowserSession(
     // Persistent context — keeps cookies, login, profile data across runs
     await mkdir(profileDir, { recursive: true });
 
-    // ── Inject Chrome preferences for silent password saving ──────────
-    // This tells Chrome to auto-save passwords without showing the bubble/prompt.
-    // Works because we use a persistent profile with real Chrome channel.
+    // ── Chrome Password Manager & Google Sync Preferences ────────────
+    // Configure Chrome to use Google's password manager as the single source
+    // of truth. When logged into Google, passwords sync automatically.
+    // Chrome silently auto-saves new passwords without showing a bubble.
     const prefsDir = path.join(profileDir, "Default");
     const prefsPath = path.join(prefsDir, "Preferences");
     try {
@@ -190,19 +196,56 @@ export async function launchBrowserSession(
       } catch {
         // No existing prefs file — start fresh
       }
-      // Enable password manager & autofill without prompts
+
+      // ── Password Manager: enable everything ──
       const profile = (prefs["profile"] as Record<string, unknown>) ?? {};
       profile["password_manager_enabled"] = true;
       prefs["profile"] = profile;
       prefs["credentials_enable_service"] = true;
       prefs["credentials_enable_autofill"] = true;
-      // Suppress the "Save password?" infobar
+
       const passwordManager = (prefs["password_manager"] as Record<string, unknown>) ?? {};
       passwordManager["saving_enabled"] = true;
+      // Auto-sign-in: skip the "Choose an account" prompt on sites with saved creds
+      passwordManager["auto_signin_enabled"] = true;
       prefs["password_manager"] = passwordManager;
+
+      // ── Autofill: enable form autofill ──
+      const autofill = (prefs["autofill"] as Record<string, unknown>) ?? {};
+      autofill["enabled"] = true;
+      autofill["profile_enabled"] = true;
+      prefs["autofill"] = autofill;
+
+      // ── Google Sync: enable password sync when signed into Google ──
+      // This makes the Google account the single source of truth.
+      // Passwords saved in Chrome sync to Google Password Manager.
+      const syncPrefs = (prefs["sync"] as Record<string, unknown>) ?? {};
+      syncPrefs["requested"] = true;
+      syncPrefs["keep_everything_synced"] = false;
+      // Only sync passwords and autofill — don't pollute with bookmarks etc.
+      const selectedTypes = (syncPrefs["selected_types"] as Record<string, unknown>) ?? {};
+      selectedTypes["passwords"] = true;
+      selectedTypes["autofill"] = true;
+      selectedTypes["preferences"] = true;
+      selectedTypes["bookmarks"] = false;
+      selectedTypes["extensions"] = false;
+      selectedTypes["apps"] = false;
+      selectedTypes["themes"] = false;
+      selectedTypes["typed_urls"] = false;
+      syncPrefs["selected_types"] = selectedTypes;
+      prefs["sync"] = syncPrefs;
+
+      // ── Suppress noisy Chrome prompts ──
+      prefs["browser"] = {
+        ...(prefs["browser"] as Record<string, unknown> ?? {}),
+        default_browser_infobar_last_declined: new Date().toISOString(),
+        check_default_browser: false,
+      };
+
       await writeFile(prefsPath, JSON.stringify(prefs, null, 2), "utf-8");
+      console.log(`[browser-runtime] 🔑 Chrome password manager & Google Sync preferences configured`);
     } catch {
-      // Non-critical — agent works without prefs, just won't auto-save passwords
+      // Non-critical — agent works without prefs, just won't auto-save via Google
     }
 
     context = await chromium.launchPersistentContext(profileDir, {
@@ -474,25 +517,25 @@ export async function launchBrowserSession(
     })();
   `);
 
-  // ── Credential Auto-Fill System ───────────────────────────────────
-  // Reads saved credentials from the profile directory and auto-fills
-  // login forms when the agent visits matching sites.
-  // This replaces Chrome's native autofill (which doesn't work in Playwright).
+  // ── Credential System (Google-first, vault fallback) ──────────────
+  // PRIMARY: Chrome's native password manager (Google Sync) handles
+  //          save/fill automatically when the user is signed into Google.
+  //          This is the "single source of truth" — like Google Save Password.
+  //
+  // FALLBACK: If Chrome native didn't auto-fill (no Google profile, or Chromium
+  //           without sync), the encrypted vault kicks in as a safety net.
+  //           The vault uses AES-256-GCM encryption (see credential-vault.ts).
   if (usePersistentProfile) {
-    const credentialsPath = path.join(profileDir, "credentials.json");
-    let credentials: Array<{ domain: string; username: string; password: string }> = [];
-    try {
-      const raw = await readFile(credentialsPath, "utf-8");
-      credentials = JSON.parse(raw);
-      console.log(`[browser-runtime] 🔑 Loaded ${credentials.length} saved credential(s)`);
-    } catch {
-      // No credentials file yet — will be created when agent saves first credential
-    }
+    // Load vault credentials as a fallback for sites Chrome didn't auto-fill.
+    // This covers: Chromium (no Google Sync), first-time logins, edge cases.
+    const vaultCredentials = await loadCredentials(profileDir);
 
-    if (credentials.length > 0) {
-      // Inject auto-fill script with credentials for matching domains
+    if (vaultCredentials.length > 0) {
+      console.log(`[browser-runtime] 🔐 Vault fallback: ${vaultCredentials.length} credential(s) available`);
+
+      // Inject fallback auto-fill — only fills if Chrome's native autofill hasn't already
       const credMap = JSON.stringify(
-        credentials.map(c => ({
+        vaultCredentials.map(c => ({
           d: c.domain,
           u: c.username,
           p: c.password,
@@ -515,76 +558,64 @@ export async function launchBrowserSession(
           if (!match) return;
 
           function tryAutoFill() {
-            // Find email/username field
             var userField = document.querySelector(
               'input[type="email"], input[name*="email" i], input[name*="user" i], ' +
               'input[name*="login" i], input[id*="email" i], input[id*="user" i], ' +
               'input[autocomplete="email"], input[autocomplete="username"]'
             );
-            // Find password field
             var passField = document.querySelector(
               'input[type="password"], input[name*="pass" i], input[id*="pass" i]'
             );
 
             if (userField && passField) {
-              // Fill using native setter to trigger React/Vue change events
+              // SKIP if Chrome's native autofill already filled the fields
+              if (userField.value && passField.value) {
+                console.log('[autofill] ⏭️ Chrome native already filled — skipping vault fallback');
+                return true;
+              }
+
+              // Vault fallback: fill using native setter for React/Vue compatibility
               var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
                 window.HTMLInputElement.prototype, 'value'
               ).set;
 
-              nativeInputValueSetter.call(userField, match.u);
-              userField.dispatchEvent(new Event('input', { bubbles: true }));
-              userField.dispatchEvent(new Event('change', { bubbles: true }));
+              if (!userField.value) {
+                nativeInputValueSetter.call(userField, match.u);
+                userField.dispatchEvent(new Event('input', { bubbles: true }));
+                userField.dispatchEvent(new Event('change', { bubbles: true }));
+              }
 
-              nativeInputValueSetter.call(passField, match.p);
-              passField.dispatchEvent(new Event('input', { bubbles: true }));
-              passField.dispatchEvent(new Event('change', { bubbles: true }));
+              if (!passField.value) {
+                nativeInputValueSetter.call(passField, match.p);
+                passField.dispatchEvent(new Event('input', { bubbles: true }));
+                passField.dispatchEvent(new Event('change', { bubbles: true }));
+              }
 
-              console.log('[autofill] ✅ Credentials filled for ' + hostname);
+              console.log('[autofill] 🔐 Vault fallback filled credentials for ' + hostname);
               return true;
             }
             return false;
           }
 
-          // Try filling after page loads (login forms may load dynamically)
+          // Delay vault fallback to give Chrome's native autofill time to act first
           if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', function() {
-              setTimeout(tryAutoFill, 500);
               setTimeout(tryAutoFill, 1500);
+              setTimeout(tryAutoFill, 3000);
             });
           } else {
-            setTimeout(tryAutoFill, 300);
             setTimeout(tryAutoFill, 1000);
+            setTimeout(tryAutoFill, 2500);
           }
         })();
       `);
     }
 
-    // Expose save_credentials function via a page handler
-    // Agent can call: await page.evaluate(() => window.__saveCredentials(domain, username, password))
+    // Expose save_credentials as a vault fallback for the agent.
+    // Primary: Chrome saves to Google Password Manager automatically.
+    // Fallback: Agent can explicitly save to the encrypted vault.
     context.exposeFunction("__saveCredentials", async (domain: string, username: string, password: string) => {
-      try {
-        let existing: Array<{ domain: string; username: string; password: string }> = [];
-        try {
-          const raw = await readFile(credentialsPath, "utf-8");
-          existing = JSON.parse(raw);
-        } catch { /* no file yet */ }
-
-        // Update existing or add new
-        const idx = existing.findIndex(c => c.domain === domain);
-        if (idx >= 0) {
-          existing[idx] = { domain, username, password };
-        } else {
-          existing.push({ domain, username, password });
-        }
-
-        await writeFile(credentialsPath, JSON.stringify(existing, null, 2), "utf-8");
-        console.log(`[browser-runtime] 💾 Saved credentials for ${domain}`);
-        return true;
-      } catch (e) {
-        console.error(`[browser-runtime] ❌ Failed to save credentials:`, e);
-        return false;
-      }
+      return upsertCredential(profileDir, domain, username, password);
     });
   }
 
