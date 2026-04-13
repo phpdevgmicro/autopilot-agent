@@ -37,8 +37,11 @@
     "jsdom": "^26.1.0",
     "tsup": "^8.4.0",
     "tsx": "^4.20.5",
-    "typescript-eslint": "^8.29.0",
     "typescript": "^5.8.2",
+    "typescript-eslint": "^8.29.0",
     "vitest": "^3.0.7"
+  },
+  "dependencies": {
+    "openai": "^6.25.0"
   }
 }

@@ -3,7 +3,7 @@ import { createServer } from "./server.js";
 const port = Number(process.env.PORT ?? 4001);
 const host = process.env.HOST ?? "0.0.0.0";
 
-const server = createServer();
+const server = await createServer();
 
 // ── Process-level crash guards ─────────────────────────────────────
 // Prevent the runner from dying silently on unhandled errors.

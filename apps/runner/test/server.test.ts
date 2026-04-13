@@ -16,7 +16,7 @@ import { createServer } from "../src/server.js";
 
 describe("runner server", () => {
   it("reports health", async () => {
-    const app = createServer();
+    const app = await createServer();
 
     try {
       const response = await app.inject({
@@ -36,7 +36,7 @@ describe("runner server", () => {
 
   it("starts, retrieves, stops, and resets scenario workspaces", async () => {
     const dataRoot = await mkdtemp(join(tmpdir(), "cua-sample-runner-server-"));
-    const app = createServer({
+    const app = await createServer({
       dataRoot,
       stepDelayMs: 50,
     });
@@ -95,7 +95,7 @@ describe("runner server", () => {
   });
 
   it("serves the validated scenario registry", async () => {
-    const app = createServer();
+    const app = await createServer();
 
     try {
       const response = await app.inject({
@@ -111,7 +111,7 @@ describe("runner server", () => {
   });
 
   it("returns the structured error envelope for invalid requests", async () => {
-    const app = createServer();
+    const app = await createServer();
 
     try {
       const response = await app.inject({
@@ -133,7 +133,7 @@ describe("runner server", () => {
   });
 
   it("returns the structured error envelope for missing runs", async () => {
-    const app = createServer();
+    const app = await createServer();
 
     try {
       const response = await app.inject({

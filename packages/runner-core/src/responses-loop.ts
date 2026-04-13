@@ -112,6 +112,21 @@ const toolExecutionTimeoutMs = Number(process.env.CUA_TOOL_TIMEOUT_MS ?? "20000"
 const defaultReasoningEffort = (process.env.CUA_REASONING_EFFORT ?? "low") as "low" | "medium" | "high";
 const webhookUrl = process.env.CUA_WEBHOOK_URL?.trim() || null;
 
+/** Models that support the `reasoning` parameter (o-series reasoning models). */
+const REASONING_MODEL_PREFIXES = ["o1", "o3", "o4"];
+
+function supportsReasoning(model: string): boolean {
+  const m = model.toLowerCase();
+  return REASONING_MODEL_PREFIXES.some((prefix) => m.startsWith(prefix));
+}
+
+function buildReasoningParam(model: string, opts?: { summary?: "concise" }) {
+  if (!supportsReasoning(model)) return undefined;
+  return opts?.summary
+    ? { effort: defaultReasoningEffort, summary: opts.summary }
+    : { effort: defaultReasoningEffort };
+}
+
 // ── Dynamic Turn Budget ─────────────────────────────────────────────
 // Instead of a fixed turn limit, the agent starts with a soft budget
 // and auto-extends in batches when still making progress.
@@ -1414,7 +1429,7 @@ export async function runResponsesCodeLoop(
           model: input.context.detail.run.model,
           parallel_tool_calls: false,
           previous_response_id: previousResponseId,
-          reasoning: { effort: defaultReasoningEffort, summary: "concise" },
+          ...(buildReasoningParam(input.context.detail.run.model, { summary: "concise" }) ? { reasoning: buildReasoningParam(input.context.detail.run.model, { summary: "concise" }) } : {}),
           tools: buildCodeToolDefinitions(),
         },
         input.context.signal,
@@ -1626,7 +1641,7 @@ export async function runResponsesNativeComputerLoop(
           model: input.context.detail.run.model,
           parallel_tool_calls: false,
           previous_response_id: previousResponseId,
-          reasoning: { effort: defaultReasoningEffort },
+          ...(buildReasoningParam(input.context.detail.run.model) ? { reasoning: buildReasoningParam(input.context.detail.run.model) } : {}),
           tools: buildComputerToolDefinitions(),
         },
         input.context.signal,

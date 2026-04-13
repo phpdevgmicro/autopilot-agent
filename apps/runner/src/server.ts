@@ -4,6 +4,7 @@ import { basename, resolve, join } from "node:path";
 import { homedir } from "node:os";
 
 import Fastify, { type FastifyReply } from "fastify";
+import { registerWebSocket } from "./ws/WebSocketServer.js";
 
 import {
   runDetailSchema,
@@ -35,7 +36,7 @@ function writeSseEvent(reply: FastifyReply, payload: unknown) {
   reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
-export function createServer(options: CreateServerOptions = {}) {
+export async function createServer(options: CreateServerOptions = {}) {
   const resolvedDataRoot = resolve(options.dataRoot ?? defaultDataRoot);
   const managerOptions = {
     dataRoot: resolvedDataRoot,
@@ -416,6 +417,9 @@ export function createServer(options: CreateServerOptions = {}) {
     await page.keyboard.press(key);
     return { ok: true };
   });
+
+  // ── WebSocket: chat + browser agent ──────────────────────────────────
+  await registerWebSocket(app);
 
   return app;
 }

@@ -16,7 +16,12 @@
     "@cua-sample/replay-schema": "workspace:*",
     "@cua-sample/runner-core": "workspace:*",
     "@cua-sample/scenario-kit": "workspace:*",
+    "@fastify/websocket": "^10.0.1",
     "fastify": "^4.29.0",
-    "playwright": "^1.55.0"
+    "playwright": "^1.55.0",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }
