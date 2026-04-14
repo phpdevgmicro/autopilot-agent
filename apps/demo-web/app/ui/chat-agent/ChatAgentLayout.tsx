@@ -18,6 +18,7 @@ export function ChatAgentLayout() {
     messages,
     browserState,
     pendingApproval,
+    isAgentBusy,
     sendMessage,
     respondToApproval,
     toggleTakeover,
@@ -67,6 +68,7 @@ export function ChatAgentLayout() {
             messages={messages}
             pendingApproval={pendingApproval}
             connectionStatus={status}
+            isAgentBusy={isAgentBusy}
             onSendMessage={sendMessage}
             onApprovalResponse={respondToApproval}
             onStop={() => stopTask()}

@@ -4,7 +4,6 @@ import { basename, resolve, join } from "node:path";
 import { homedir } from "node:os";
 
 import Fastify, { type FastifyReply } from "fastify";
-import { registerWebSocket } from "./ws/WebSocketServer.js";
 
 import {
   runDetailSchema,
@@ -23,6 +22,7 @@ import {
   syncPrompts,
 } from "@cua-sample/runner-core";
 import { listScenarios } from "@cua-sample/scenario-kit";
+import { registerWebSocket } from "./ws/WebSocketServer.js";
 
 type CreateServerOptions = {
   dataRoot?: string;
@@ -228,31 +228,82 @@ export async function createServer(options: CreateServerOptions = {}) {
 
   app.get("/api/browser/profiles", async () => {
     try {
-      const { readdir } = await import("node:fs/promises");
+      const { readdir, readFile, stat: fsStat } = await import("node:fs/promises");
       const entries = await readdir(baseProfileDir, { withFileTypes: true });
       const ignoreDirs = new Set(["Default", "Crashpad", "Safe Browsing", "component_crx_cache", "GrShaderCache", "GraphiteDawnCache", "ShaderCache", "segmentation_platform"]);
-      const profiles = entries
-        .filter(e => e.isDirectory() && !ignoreDirs.has(e.name))
-        .map(e => e.name);
-      return { profiles: profiles.length ? profiles : ["default"] };
+      const profileDirs = entries
+        .filter(e => e.isDirectory() && !ignoreDirs.has(e.name));
+
+      // Build enriched profile info
+      const profiles = await Promise.all(profileDirs.map(async (e) => {
+        const pDir = join(baseProfileDir, e.name);
+        const cookieFile = join(pDir, "imported-cookies.json");
+        let hasCookies = false;
+        let cookieCount = 0;
+        let source = "";
+        let syncedAt = "";
+
+        try {
+          const raw = await readFile(cookieFile, "utf-8");
+          const data = JSON.parse(raw);
+          hasCookies = Array.isArray(data.cookies) && data.cookies.length > 0;
+          cookieCount = data.cookies?.length ?? 0;
+          source = data.source ?? "";
+          syncedAt = data.importedAt ?? "";
+        } catch { /* no cookie file */ }
+
+        // Check profile dir modification time as fallback
+        let lastModified = "";
+        try {
+          const s = await fsStat(pDir);
+          lastModified = s.mtime.toISOString();
+        } catch { /* ignore */ }
+
+        return {
+          name: e.name,
+          hasCookies,
+          cookieCount,
+          source,
+          syncedAt,
+          lastModified,
+        };
+      }));
+
+      // Always include "default" even if no directory exists
+      if (!profiles.some(p => p.name === "default")) {
+        profiles.unshift({ name: "default", hasCookies: false, cookieCount: 0, source: "", syncedAt: "", lastModified: "" });
+      }
+
+      return { profiles };
     } catch {
-      return { profiles: ["default"] };
+      return { profiles: [{ name: "default", hasCookies: false, cookieCount: 0, source: "", syncedAt: "", lastModified: "" }] };
     }
   });
 
   app.get("/api/browser/profile-status", async (request) => {
     const query = request.query as { profileName?: string };
-    const pDir = getProfileDir(query.profileName);
+    const pName = query.profileName || "default";
+    const pDir = getProfileDir(pName);
     let exists = false;
+    let hasCookies = false;
+    let cookieCount = 0;
     try {
       const s = await stat(pDir);
       exists = s.isDirectory();
+      // Check for synced cookies
+      const { readFile } = await import("node:fs/promises");
+      const raw = await readFile(join(pDir, "imported-cookies.json"), "utf-8");
+      const data = JSON.parse(raw);
+      hasCookies = Array.isArray(data.cookies) && data.cookies.length > 0;
+      cookieCount = data.cookies?.length ?? 0;
     } catch { /* doesn't exist */ }
 
     return {
       persist: process.env.CUA_BROWSER_PERSIST !== "false",
       profileDir: pDir,
       profileExists: exists,
+      hasCookies,
+      cookieCount,
     };
   });
 
@@ -367,6 +418,10 @@ export async function createServer(options: CreateServerOptions = {}) {
   });
 
   // ── Embedded login interaction endpoints ───────────────
+  // Remote login context — set when user opens a login browser session
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let remoteLoginCtx: any = null;
+
   app.get("/api/browser/login-screenshot", async (_request, reply) => {
     if (!remoteLoginCtx) { reply.code(404); return { error: "No active login session" }; }
     const page = remoteLoginCtx.pages()[0];
@@ -398,7 +453,8 @@ export async function createServer(options: CreateServerOptions = {}) {
       const focused = page.locator(":focus");
       const count = await focused.count();
       if (count > 0) {
-        const tag = await focused.evaluate((el) => el.tagName.toLowerCase());
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tag = await focused.evaluate((el: any) => el.tagName.toLowerCase());
         if (tag === "input" || tag === "textarea") {
           await focused.fill(text);
           return { ok: true, method: "fill" };
@@ -418,7 +474,7 @@ export async function createServer(options: CreateServerOptions = {}) {
     return { ok: true };
   });
 
-  // ── WebSocket: chat + browser agent ──────────────────────────────────
+  // Register WebSocket routes for the chat agent
   await registerWebSocket(app);
 
   return app;

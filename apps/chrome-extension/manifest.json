@@ -10,6 +10,7 @@
   "permissions": [
     "cookies",
     "activeTab",
+    "tabs",
     "storage",
     "identity",
     "identity.email"

@@ -4,11 +4,20 @@ import util from "node:util";
 import OpenAI from "openai";
 
 import { type BrowserSession } from "@cua-sample/browser-runtime";
+import {
+  type DOMSnapshot,
+  extractInteractiveElements,
+  formatSnapshotForLLM,
+  clickElementByIndex,
+  typeIntoElementByIndex,
+  selectOptionByIndex,
+} from "@cua-sample/browser-runtime/dom-indexer";
 
 import { RunnerCoreError } from "./errors.js";
 import { maskCredentials } from "./credential-mask.js";
 import { getPrompt, isPromptStoreSynced } from "./prompt-store.js";
 import type { RunExecutionContext } from "./scenario-runtime.js";
+import { LoopDetector } from "./loop-detector.js";
 
 type ComputerAction = {
   [key: string]: unknown;
@@ -775,6 +784,96 @@ function buildAgentToolDefinitions() {
         type: "object",
       },
     },
+    // ── Element Indexing Tools (ported from browser-use) ──────────────
+    {
+      type: "function",
+      name: "get_elements",
+      description: [
+        "Get all interactive elements on the current page as an indexed list.",
+        "Each element has a numeric index you can use with click_element, type_element, or select_element.",
+        "More reliable than guessing coordinates from screenshots.",
+        "Returns elements like: [1] button \"Submit\" | [2] input[email] placeholder=\"you@example.com\"",
+      ].join("\n"),
+      strict: true,
+      parameters: {
+        additionalProperties: false,
+        properties: {},
+        type: "object",
+      },
+    },
+    {
+      type: "function",
+      name: "click_element",
+      description: [
+        "Click an interactive element by its index from get_elements.",
+        "More reliable than coordinate-based clicking — uses CSS selectors to target the exact element.",
+        "Always call get_elements first to see available elements and their indices.",
+      ].join("\n"),
+      strict: true,
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          index: {
+            description: "Element index number from the get_elements output",
+            type: "number",
+          },
+        },
+        required: ["index"],
+        type: "object",
+      },
+    },
+    {
+      type: "function",
+      name: "type_element",
+      description: [
+        "Type text into an input/textarea element by its index from get_elements.",
+        "Set clear=true to clear the existing value first (e.g., to replace text).",
+      ].join("\n"),
+      strict: true,
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          index: {
+            description: "Element index number from the get_elements output",
+            type: "number",
+          },
+          text: {
+            description: "Text to type into the element",
+            type: "string",
+          },
+          clear: {
+            description: "Clear existing value before typing (default: false)",
+            type: "boolean",
+          },
+        },
+        required: ["index", "text", "clear"],
+        type: "object",
+      },
+    },
+    {
+      type: "function",
+      name: "select_element",
+      description: [
+        "Select an option from a dropdown/select element by its index from get_elements.",
+        "Use the option text (label) as the value to select.",
+      ].join("\n"),
+      strict: true,
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          index: {
+            description: "Element index number from the get_elements output",
+            type: "number",
+          },
+          value: {
+            description: "Option text or value to select from the dropdown",
+            type: "string",
+          },
+        },
+        required: ["index", "value"],
+        type: "object",
+      },
+    },
   ];
 }
 
@@ -1041,6 +1140,7 @@ async function executeFunctionToolCall(
   options: {
     vmContext?: vm.Context;
     notepad?: Map<string, string>;
+    elementSnapshot?: { current: DOMSnapshot | null };
   } = {},
 ) {
   const toolName = functionCall.name ?? "<unknown>";
@@ -1079,6 +1179,69 @@ async function executeFunctionToolCall(
     case "agent_notepad": {
       const args = JSON.parse(functionCall.arguments ?? "{}") as { action: string; key?: string; value?: string };
       output = executeAgentNotepad(options.notepad ?? new Map(), args);
+      break;
+    }
+
+    // ── Element Indexing Tools ──────────────────────────────────────
+
+    case "get_elements": {
+      const snapshotRef = options.elementSnapshot ?? { current: null };
+      const snapshot = await extractInteractiveElements(input.session.page);
+      snapshotRef.current = snapshot;
+      const formatted = formatSnapshotForLLM(snapshot);
+      output = [{ text: formatted, type: "input_text" }];
+      break;
+    }
+
+    case "click_element": {
+      const args = JSON.parse(functionCall.arguments ?? "{}") as { index: number };
+      const snapshotRef = options.elementSnapshot ?? { current: null };
+      if (!snapshotRef.current) {
+        // Auto-refresh snapshot if not available
+        snapshotRef.current = await extractInteractiveElements(input.session.page);
+      }
+      const clickResult = await clickElementByIndex(input.session.page, snapshotRef.current, args.index);
+      output = [{ text: clickResult.message, type: "input_text" }];
+      if (clickResult.success) {
+        // Invalidate snapshot after click (page may have changed)
+        snapshotRef.current = null;
+        // Wait for page to settle
+        await input.session.page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
+        await input.context.syncBrowserState(input.session);
+        await input.context.captureScreenshot(input.session, `click-element-${args.index}-${Date.now()}`);
+      }
+      break;
+    }
+
+    case "type_element": {
+      const args = JSON.parse(functionCall.arguments ?? "{}") as { index: number; text: string; clear: boolean };
+      const snapshotRef = options.elementSnapshot ?? { current: null };
+      if (!snapshotRef.current) {
+        snapshotRef.current = await extractInteractiveElements(input.session.page);
+      }
+      const typeResult = await typeIntoElementByIndex(
+        input.session.page, snapshotRef.current, args.index, args.text, args.clear,
+      );
+      output = [{ text: typeResult.message, type: "input_text" }];
+      if (typeResult.success) {
+        snapshotRef.current = null;
+      }
+      break;
+    }
+
+    case "select_element": {
+      const args = JSON.parse(functionCall.arguments ?? "{}") as { index: number; value: string };
+      const snapshotRef = options.elementSnapshot ?? { current: null };
+      if (!snapshotRef.current) {
+        snapshotRef.current = await extractInteractiveElements(input.session.page);
+      }
+      const selectResult = await selectOptionByIndex(
+        input.session.page, snapshotRef.current, args.index, args.value,
+      );
+      output = [{ text: selectResult.message, type: "input_text" }];
+      if (selectResult.success) {
+        snapshotRef.current = null;
+      }
       break;
     }
 
@@ -1605,6 +1768,8 @@ export async function runResponsesNativeComputerLoop(
   const activityLog: ActivityLogEntry[] = [];
   const startTime = Date.now();
   const agentNotepad = new Map<string, string>();
+  const elementSnapshotRef: { current: DOMSnapshot | null } = { current: null };
+  const loopDetector = new LoopDetector();
 
   // ── Dynamic turn budget ──────────────────────────────────────────
   const hardCeiling = input.maxResponseTurns;
@@ -1678,7 +1843,7 @@ export async function runResponsesNativeComputerLoop(
 
         toolOutputs.push({
           call_id: outputItem.call_id,
-          output: await executeFunctionToolCall(input, outputItem, { notepad: agentNotepad }),
+          output: await executeFunctionToolCall(input, outputItem, { notepad: agentNotepad, elementSnapshot: elementSnapshotRef }),
           type: "function_call_output",
         });
         continue;
@@ -1751,6 +1916,42 @@ export async function runResponsesNativeComputerLoop(
     }
 
     nextInput = toolOutputs;
+
+    // ── Loop Detection ──────────────────────────────────────────────
+    for (const outputItem of response.output ?? []) {
+      if (isComputerCallItem(outputItem)) {
+        for (const action of outputItem.actions ?? []) {
+          const actionStr = JSON.stringify(action).slice(0, 200);
+          loopDetector.recordAction(actionStr, input.session.page.url());
+        }
+      }
+    }
+
+    const loopCheck = loopDetector.isStuck();
+    if (loopCheck.stuck) {
+      await input.context.emitEvent({
+        detail: `${loopCheck.reason} — Recovery: ${loopCheck.recoveryHint}`,
+        level: "warn",
+        message: `⚠️ Loop detected (${loopCheck.stuckCount}x): ${loopCheck.reason}`,
+        type: "run_progress",
+      });
+
+      // Inject recovery hint into the next input as a system-level message
+      if (Array.isArray(nextInput)) {
+        (nextInput as unknown[]).push({
+          role: "user",
+          content: [{
+            type: "input_text",
+            text: `⚠️ LOOP DETECTED: ${loopCheck.reason}\n\n💡 ${loopCheck.recoveryHint}\n\nTry a different approach. Use get_elements to discover interactive elements if you haven't already.`,
+          }],
+        });
+      }
+
+      // After 3 stuck detections, reset the loop detector to give the agent a fresh chance
+      if (loopCheck.stuckCount >= 3) {
+        loopDetector.reset();
+      }
+    }
 
     // ── Auto-extend budget if agent is still working and approaching limit ──
     if (turn >= currentBudget && currentBudget < hardCeiling) {

@@ -2,6 +2,15 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
+type ProfileInfo = {
+  name: string;
+  hasCookies: boolean;
+  cookieCount: number;
+  source: string;
+  syncedAt: string;
+  lastModified: string;
+};
+
 type ConnectProfileProps = {
   runnerBaseUrl: string;
   selectedProfile?: string;
@@ -10,7 +19,7 @@ type ConnectProfileProps = {
 
 export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfileChange }: ConnectProfileProps) {
   const [status, setStatus] = useState<"loading" | "connected" | "not-connected" | "disabled">("loading");
-  const [profiles, setProfiles] = useState<string[]>([]);
+  const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const [action, setAction] = useState<"idle" | "switching" | "clearing">("idle");
   const [menuOpen, setMenuOpen] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -28,18 +37,21 @@ export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfile
 
       const profilesRes = await fetch(`${runnerBaseUrl}/api/browser/profiles`);
       const profilesData = await profilesRes.json();
-      setProfiles(profilesData.profiles || ["default"]);
+      const profileList: ProfileInfo[] = profilesData.profiles || [];
 
-      if (!selectedProfile && profilesData.profiles?.length > 0) {
-        let defaultOrFirst = profilesData.profiles.includes("default") ? "default" : profilesData.profiles[0];
-        if (profilesData.profiles.length > 1) {
-          defaultOrFirst = profilesData.profiles.find((p: string) => p !== "default") || defaultOrFirst;
-        }
-        onProfileChange?.(defaultOrFirst);
+      setProfiles(profileList);
+
+      // Auto-select the first profile with cookies, or default
+      if (!selectedProfile && profileList.length > 0) {
+        const withCookies = profileList.find(p => p.hasCookies && p.name !== "default");
+        const fallback = profileList.find(p => p.name === "default") || profileList[0];
+        onProfileChange?.((withCookies || fallback).name);
       }
 
-      if (profilesData.profiles?.includes(selectedProfile || "default")) {
-        setStatus((selectedProfile && selectedProfile !== "default") ? "connected" : "not-connected");
+      // Determine connected state based on whether selected profile has cookies
+      const current = profileList.find(p => p.name === (selectedProfile || "default"));
+      if (current?.hasCookies) {
+        setStatus("connected");
       } else {
         setStatus("not-connected");
       }
@@ -51,6 +63,12 @@ export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfile
   useEffect(() => {
     void checkStatus();
   }, [checkStatus, menuOpen]);
+
+  // Poll for new profiles every 10s (extension may sync while menu is closed)
+  useEffect(() => {
+    const interval = setInterval(() => void checkStatus(), 10_000);
+    return () => clearInterval(interval);
+  }, [checkStatus]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -91,29 +109,52 @@ export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfile
   if (status === "loading" || status === "disabled") return null;
 
   const busy = action !== "idle";
-  const dotColor = status === "connected" ? "#22c55e" : "#ef4444";
+  const currentProfile = profiles.find(p => p.name === (selectedProfile || "default"));
+  const isConnected = currentProfile?.hasCookies ?? false;
+  const dotColor = isConnected ? "#22c55e" : "#ef4444";
 
-  const profileDisplayName =
-    selectedProfile && selectedProfile !== "default"
-      ? selectedProfile.replace(/@gmail\.com$/, "")
-      : null;
+  // Display name: show full email for named profiles
+  const getDisplayName = (name: string): string => {
+    if (name === "default") return "Guest (No cookies)";
+    return name;
+  };
+
+  // Shorten for pill display (strip @gmail.com etc.)
+  const getPillName = (name: string): string => {
+    if (name === "default") return "Select Profile";
+    return name.replace(/@gmail\.com$/, "").replace(/@.*$/, "");
+  };
 
   const label =
     action === "switching" ? "Switching…" :
     action === "clearing" ? "Clearing…" :
-    status === "connected" && profileDisplayName ? profileDisplayName :
-    status === "connected" ? "Profile Linked" : "No Profile";
+    isConnected && selectedProfile
+      ? getPillName(selectedProfile)
+      : "Select Profile";
+
+  // Format relative time
+  const formatSyncTime = (iso: string): string => {
+    if (!iso) return "";
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+  };
 
   return (
     <div className="profileDropdownWrapper" ref={menuRef}>
       <button
-        className={`profilePillBtn ${status === "connected" ? "profilePillConnected" : "profilePillDisconnected"} ${busy ? "profilePillBusy" : ""}`}
+        className={`profilePillBtn ${isConnected ? "profilePillConnected" : "profilePillDisconnected"} ${busy ? "profilePillBusy" : ""}`}
         onClick={() => !busy && setMenuOpen((v) => !v)}
         type="button"
         disabled={busy}
       >
         <span className="profilePillDot" style={{ background: dotColor }} />
-        <span className="profilePillLabel">{status === "connected" ? label : "Select Profile"}</span>
+        <span className="profilePillLabel">{label}</span>
         <svg className={`profilePillChevron ${menuOpen ? "profilePillChevronOpen" : ""}`} width="10" height="10" viewBox="0 0 10 10" fill="none">
           <path d="M2.5 3.75L5 6.25L7.5 3.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
@@ -127,27 +168,70 @@ export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfile
           </div>
 
           <div style={{ padding: "8px" }}>
-            {profiles.map((p) => (
-              <button
-                key={p}
-                className={`profileDropdownItem ${selectedProfile === p ? "active" : ""}`}
-                onClick={() => {
-                  onProfileChange?.(p);
-                  setMenuOpen(false);
-                }}
-                style={{ display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "flex-start", gap: "8px", opacity: selectedProfile === p ? 1 : 0.7 }}
-                type="button"
-              >
-                <span style={{ width: "16px", flexShrink: 0, textAlign: "center" }}>
-                  {selectedProfile === p ? "✓" : ""}
-                </span>
-                <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {p === "default" ? "Guest (No Account)" : p}
-                </span>
-              </button>
-            ))}
+            {profiles.map((p) => {
+              const isSelected = (selectedProfile || "default") === p.name;
+              return (
+                <button
+                  key={p.name}
+                  className={`profileDropdownItem ${isSelected ? "active" : ""}`}
+                  onClick={() => {
+                    onProfileChange?.(p.name);
+                    setMenuOpen(false);
+                  }}
+                  type="button"
+                  style={{
+                    display: "flex",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    justifyContent: "flex-start",
+                    gap: "10px",
+                    opacity: isSelected ? 1 : 0.75,
+                    padding: "8px 10px",
+                  }}
+                >
+                  {/* Selection check */}
+                  <span style={{ width: "16px", flexShrink: 0, textAlign: "center", fontSize: "0.8rem" }}>
+                    {isSelected ? "✓" : ""}
+                  </span>
+
+                  {/* Profile info */}
+                  <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+                    <div style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}>
+                      {getDisplayName(p.name)}
+                      {p.hasCookies && (
+                        <span style={{
+                          width: "6px",
+                          height: "6px",
+                          borderRadius: "50%",
+                          background: "#22c55e",
+                          flexShrink: 0,
+                        }} />
+                      )}
+                    </div>
+                    {/* Cookie metadata */}
+                    {p.hasCookies && (
+                      <div style={{
+                        fontSize: "0.68rem",
+                        color: "rgba(255,255,255,0.35)",
+                        marginTop: "2px",
+                      }}>
+                        {p.cookieCount} cookies • synced {formatSyncTime(p.syncedAt)}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
+          {/* Bottom actions row */}
           <div style={{ display: "flex", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
             <a
               href="/agent-john-wick-extension.zip"
@@ -163,7 +247,7 @@ export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfile
               </svg>
               Extension
             </a>
-            {status === "connected" && (
+            {isConnected && (
               <button
                 className="profileDropdownItem"
                 onClick={() => void handleClearProfile()}

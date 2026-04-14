@@ -9,22 +9,30 @@ interface ChatPanelProps {
   messages: ChatMessageType[];
   pendingApproval: ApprovalRequest | null;
   connectionStatus: ConnectionStatus;
+  isAgentBusy: boolean;
   onSendMessage: (content: string) => void;
   onApprovalResponse: (requestId: string, action: "approve" | "reject") => void;
   onStop: () => void;
 }
 
+const QUICK_ACTIONS = [
+  { label: "Open Google Drive", icon: "📁", prompt: "Open Google Drive and list my recent files" },
+  { label: "Search the web", icon: "🔍", prompt: "Search Google for the latest tech news" },
+  { label: "Open Gmail", icon: "📧", prompt: "Open Gmail and check my latest emails" },
+  { label: "Take a screenshot", icon: "📸", prompt: "Navigate to google.com and take a screenshot" },
+];
+
 export function ChatPanel({
   messages,
   pendingApproval,
   connectionStatus,
+  isAgentBusy,
   onSendMessage,
   onApprovalResponse,
   onStop,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isConnected = connectionStatus === "connected";
-  const hasThinkingMessage = messages.some((m) => m.role === "thinking");
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -38,39 +46,111 @@ export function ChatPanel({
       {/* Header */}
       <div className="chatPanelHeader">
         <div className="chatPanelHeaderLeft">
-          <span className="chatPanelLogo">🤖</span>
+          <div className="chatPanelAgentAvatar">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 8V4H8" />
+              <rect width="16" height="12" x="4" y="8" rx="2" />
+              <path d="M2 14h2" />
+              <path d="M20 14h2" />
+              <path d="M15 13v2" />
+              <path d="M9 13v2" />
+            </svg>
+          </div>
           <div className="chatPanelTitle">
             <h2>Agent</h2>
             <div className="chatPanelStatus">
               <span
-                className={`chatStatusDot ${isConnected ? "chatStatusDotOnline" : "chatStatusDotOffline"}`}
+                className={`chatStatusDot ${isConnected ? "chatStatusDotOnline" : connectionStatus === "connecting" ? "chatStatusDotConnecting" : "chatStatusDotOffline"}`}
               />
               <span className="chatStatusText">
                 {connectionStatus === "connecting"
                   ? "Connecting…"
                   : isConnected
                     ? "Online"
-                    : "Offline"}
+                    : "Reconnecting…"}
               </span>
             </div>
           </div>
         </div>
+        {isAgentBusy && (
+          <div className="chatPanelBusyIndicator">
+            <span className="chatBusyDot" />
+            <span>Working…</span>
+          </div>
+        )}
       </div>
 
       {/* Messages */}
       <div className="chatMessages" ref={scrollRef} id="chat-messages">
-        {messages.length === 0 && isConnected && (
-          <div className="chatEmptyState">
-            <div className="chatEmptyIcon">
-              <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                <circle cx="24" cy="24" r="20" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 4" opacity="0.3" />
-                <path d="M16 20C16 17.7909 17.7909 16 20 16H28C30.2091 16 32 17.7909 32 20V26C32 28.2091 30.2091 30 28 30H23L18 34V30H20C17.7909 30 16 28.2091 16 26V20Z" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
-              </svg>
+        {messages.length === 0 && (
+          <div className="chatWelcome">
+            {/* Welcome Hero */}
+            <div className="chatWelcomeHero">
+              <div className="chatWelcomeIconWrap">
+                <div className="chatWelcomeGlow" />
+                <svg className="chatWelcomeIcon" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 8V4H8" />
+                  <rect width="16" height="12" x="4" y="8" rx="2" />
+                  <path d="M2 14h2" />
+                  <path d="M20 14h2" />
+                  <path d="M15 13v2" />
+                  <path d="M9 13v2" />
+                </svg>
+              </div>
+              <h3 className="chatWelcomeTitle">
+                {isConnected ? "Ready to help!" : "Connecting to agent…"}
+              </h3>
+              <p className="chatWelcomeSubtitle">
+                Tell me what to do — I&apos;ll navigate websites, fill forms, click buttons, and complete tasks in the browser.
+              </p>
             </div>
-            <p className="chatEmptyTitle">What can I help you with?</p>
-            <p className="chatEmptyDesc">
-              Tell me what to do in the browser — I&apos;ll navigate, click, type, and complete tasks for you.
-            </p>
+
+            {/* Quick Actions */}
+            {isConnected && (
+              <div className="chatQuickActions">
+                <span className="chatQuickLabel">Quick start</span>
+                <div className="chatQuickGrid">
+                  {QUICK_ACTIONS.map((action) => (
+                    <button
+                      key={action.label}
+                      className="chatQuickBtn"
+                      onClick={() => onSendMessage(action.prompt)}
+                      type="button"
+                    >
+                      <span className="chatQuickBtnIcon">{action.icon}</span>
+                      <span className="chatQuickBtnLabel">{action.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Capabilities */}
+            <div className="chatCapabilities">
+              <div className="chatCapability">
+                <span className="chatCapIcon">🌐</span>
+                <span>Navigate any website</span>
+              </div>
+              <div className="chatCapability">
+                <span className="chatCapIcon">🔐</span>
+                <span>Uses your synced Google profile</span>
+              </div>
+              <div className="chatCapability">
+                <span className="chatCapIcon">⚡</span>
+                <span>Executes tasks autonomously</span>
+              </div>
+            </div>
+
+            {/* Connection Warning */}
+            {!isConnected && (
+              <div className="chatConnectionWarning">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M8 5v3M8 10.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                <span>Waiting for runner at localhost:4001…</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -109,7 +189,7 @@ export function ChatPanel({
         onSend={onSendMessage}
         onStop={onStop}
         disabled={!isConnected}
-        isAgentRunning={hasThinkingMessage}
+        isAgentRunning={isAgentBusy}
       />
     </div>
   );

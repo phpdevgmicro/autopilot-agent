@@ -25,12 +25,19 @@ import {
   createDefaultResponsesClient,
   runResponsesNativeComputerLoop,
   runResponsesCodeLoop,
+  buildFreestyleCodeInstructions,
 } from "@cua-sample/runner-core";
 
 import type { ChatSession } from "./ChatSessionManager.js";
 import type { ChatSessionConfig } from "./types.js";
 
 // ── Types ───────────────────────────────────────────────────────────
+
+interface ConversationEntry {
+  role: "user" | "assistant";
+  content: string;
+  timestamp: number;
+}
 
 interface AgentRunResult {
   finalMessage: string;
@@ -47,6 +54,13 @@ export class ChatAgentRunner {
   private isRunning = false;
   private screenshotDir: string;
   private screenshotInterval: ReturnType<typeof setInterval> | null = null;
+  /** Which browser profile is currently loaded (tracks re-launch need) */
+  private currentBrowserProfile: string | undefined;
+
+  /** Conversation history — persists across turns for multi-turn context */
+  private conversationHistory: ConversationEntry[] = [];
+  /** Track how many tasks have been completed this session */
+  private tasksCompleted = 0;
 
   constructor(session: ChatSession) {
     this.session = session;
@@ -61,10 +75,20 @@ export class ChatAgentRunner {
       return null;
     }
 
+    // Track user message in conversation history
+    this.conversationHistory.push({
+      role: "user",
+      content: userPrompt,
+      timestamp: Date.now(),
+    });
+
     const config = this.session.getConfig();
     const startTime = Date.now();
     this.isRunning = true;
     this.abortController = new AbortController();
+
+    // Stop idle screenshot streaming (will restart active streaming)
+    this.stopScreenshotStreaming();
 
     try {
       // 1. Create OpenAI client
@@ -77,41 +101,108 @@ export class ChatAgentRunner {
         return null;
       }
 
-      // 2. Launch browser
-      await this.launchBrowser(config, browserProfile);
+      // 2. Launch browser (reuse existing if still alive)
+      // Resolve effective profile to detect mismatches
+      const effectiveProfile = browserProfile || process.env.CUA_DEFAULT_BROWSER_PROFILE || undefined;
+      const profileChanged = this.browser && effectiveProfile !== this.currentBrowserProfile;
 
-      // 3. Start screenshot streaming
+      if (profileChanged) {
+        // Profile changed — close old browser and re-launch with correct cookies
+        console.log(`[agent-runner] Profile changed: "${this.currentBrowserProfile}" → "${effectiveProfile}". Re-launching browser.`);
+        this.stopScreenshotStreaming();
+        try { await this.browser!.close(); } catch { /* best-effort */ }
+        this.browser = null;
+      }
+
+      if (!this.browser) {
+        await this.launchBrowser(config, browserProfile);
+      } else {
+        // Browser already alive with the same profile — just update state
+        this.session.updateBrowserState({ isActive: true, isLoading: false });
+      }
+
+      // 3. Start active screenshot streaming (higher frequency)
       this.startScreenshotStreaming(config.screenshotIntervalMs);
 
       // 4. Send initial screenshot
       await this.captureAndSendScreenshot();
 
       // 5. Build instructions
-      const instructions = this.buildInstructions();
+      // In code mode, use the proven Google Sheet prompt (same as the older working agent).
+      // In native mode, fall back to the hardcoded buildInstructions().
+      const executionMode = process.env.CUA_EXECUTION_MODE ?? "native";
+      let instructions: string;
+      if (executionMode === "code") {
+        try {
+          const currentUrl = this.browser?.page?.url?.() ?? "https://www.google.com";
+          instructions = await buildFreestyleCodeInstructions(currentUrl);
+          console.log(`[agent-runner] Using Google Sheet prompt for code mode (${instructions.length} chars)`);
+        } catch (e) {
+          console.warn(`[agent-runner] Failed to load Sheet prompt, falling back to built-in instructions:`, e);
+          instructions = this.buildInstructions();
+        }
+      } else {
+        instructions = this.buildInstructions();
+      }
 
-      // 6. Run the CUA loop
-      const result = await this.executeCuaLoop(client, userPrompt, instructions, config);
+      // Always append Google account handling rules (Sheet prompt may not include them)
+      instructions += this.getGoogleAccountInstructions();
 
-      // 7. Final screenshot
+      // 6. Build contextual prompt with conversation history
+      const contextualPrompt = this.buildContextualPrompt(userPrompt);
+
+
+      // 7. Run the CUA loop
+      const result = await this.executeCuaLoop(client, contextualPrompt, instructions, config);
+
+      // 8. Final screenshot
       await this.captureAndSendScreenshot();
 
       const durationMs = Date.now() - startTime;
+      this.tasksCompleted++;
+
+      // Build completion message
+      const agentReply = result.finalAssistantMessage ?? "Task completed.";
+      const completionMsg = this.buildCompletionMessage(agentReply, durationMs);
+
+      // Track agent response in conversation history
+      this.conversationHistory.push({
+        role: "assistant",
+        content: agentReply,
+        timestamp: Date.now(),
+      });
+
+      // Keep conversation history manageable (last 20 turns)
+      if (this.conversationHistory.length > 40) {
+        this.conversationHistory = this.conversationHistory.slice(-40);
+      }
 
       return {
-        finalMessage: result.finalAssistantMessage ?? "Task completed.",
+        finalMessage: completionMsg,
         turnsUsed: result.notes.length,
         durationMs,
       };
     } catch (err) {
       if (this.abortController?.signal.aborted) {
-        return { finalMessage: "Task stopped by user.", turnsUsed: 0, durationMs: Date.now() - startTime };
+        this.conversationHistory.push({
+          role: "assistant",
+          content: "Task stopped by user.",
+          timestamp: Date.now(),
+        });
+        return { finalMessage: "⏹️ Task stopped. What would you like me to do instead?", turnsUsed: 0, durationMs: Date.now() - startTime };
       }
       const errorMsg = err instanceof Error ? err.message : String(err);
       this.session.addSystemMessage(`❌ Agent error: ${errorMsg}`);
       console.error("[agent-runner] Error:", err);
       return null;
     } finally {
-      this.cleanup();
+      // Only stop the run state and active screenshot streaming.
+      // Keep the browser alive for multi-turn conversations.
+      this.isRunning = false;
+      this.stopScreenshotStreaming();
+
+      // Start idle screenshot streaming so user can still see the browser
+      this.startIdleScreenshotStreaming();
     }
   }
 
@@ -152,6 +243,7 @@ export class ChatAgentRunner {
 
     // Resolve profile: explicit param → env var → undefined (default)
     const resolvedProfile = browserProfile || process.env.CUA_DEFAULT_BROWSER_PROFILE || undefined;
+    this.currentBrowserProfile = resolvedProfile;
     if (resolvedProfile) {
       console.log(`[agent-runner] Using browser profile: ${resolvedProfile}`);
     }
@@ -160,7 +252,7 @@ export class ChatAgentRunner {
 
     this.browser = await launchBrowserSession({
       browserMode: "headless",
-      browserProfile: resolvedProfile,
+      ...(resolvedProfile ? { browserProfile: resolvedProfile } : {}),
       screenshotDir: this.screenshotDir,
       startTarget: { kind: "remote_url", url: startUrl, label: "Google" },
       workspacePath: this.screenshotDir,
@@ -332,17 +424,162 @@ export class ChatAgentRunner {
 
   private buildInstructions(): string {
     return [
-      "You are a helpful browser agent. The user will give you tasks to complete in a web browser.",
-      "You can see the browser through screenshots and interact with it using computer actions.",
+      "You are a helpful browser assistant. The user chats with you and you complete tasks in their browser.",
       "",
-      "Guidelines:",
-      "- Navigate to websites, fill forms, click buttons, extract information",
-      "- Always wait for pages to load before interacting",
-      "- Be thorough but efficient — minimize unnecessary clicks",
-      "- If you encounter a login page, ask the user for credentials",
-      "- Report your progress clearly as you work",
-      "- When done, provide a clear summary of what you accomplished",
+      "## Your Personality",
+      "- You are friendly, efficient, and direct",
+      "- After completing a task, briefly summarize what you did",
+      "- If you encounter issues, explain them clearly and suggest alternatives",
+      "- If you need the user to do something (like login), ask clearly",
+      "",
+      "## Your Tools",
+      "You have two ways to interact with the browser:",
+      "",
+      "### Method 1: Element-based (PREFERRED — more reliable)",
+      "1. Call `get_elements` to see all interactive elements on the page",
+      "2. Use `click_element(index)`, `type_element(index, text)`, or `select_element(index, value)`",
+      "3. This is more reliable than guessing coordinates from screenshots",
+      "",
+      "### Method 2: Direct computer actions (for visual/spatial tasks)",
+      "- Use the computer tool for clicking, scrolling, typing at specific coordinates",
+      "- Use this for pixel-precise interaction or when element-based tools can't reach",
+      "",
+      "## Workflow",
+      "1. Read the user's request carefully",
+      "2. Call `get_elements` to understand the current page",
+      "3. Take action using element-based tools (preferred) or computer actions",
+      "4. After each major action, check the result",
+      "5. Continue until the task is complete",
+      "6. Respond with a brief summary of what you did",
+      "",
+      "## Important Rules",
+      "- ALWAYS take action — never just describe what you would do",
+      "- Use get_elements before guessing coordinates",
+      "- If a page requires login you cannot bypass, tell the user clearly",
+      "- If you're stuck, try a different approach before giving up",
+      "- Keep responses concise — the user can see the browser",
+      "- The browser has a persistent profile with synced Google cookies — you ARE already logged into Google services",
+      "- The user can see the browser in real-time alongside this chat",
+      "",
+      "## Google Account & Login Handling",
+      "- The browser has synced cookies from the user's Google account. You are ALREADY logged in.",
+      "- If Google shows a 'Choose an account' page, CLICK the account that is shown (it's the user's synced profile)",
+      "- Do NOT report Google login as 'blocked' — the account is already available, just click it",
+      "- For Google Drive, Sheets, Gmail, Calendar — navigate directly to the URL (e.g. https://drive.google.com)",
+      "- If you see 'Signed out' next to the account, click it anyway — cookies will authenticate the session",
+      "",
+      "## Efficiency Tips",
+      "- Prefer direct URL navigation over clicking through menus when possible",
+      "- Batch observations: check URL, title, and content in one step",
+      "- After clicking, wait for the page to update (check URL change or new content)",
+      "- If scrolling reveals nothing, try a different approach instead of scrolling more",
+      "- STOP when the task is done — don't do extra unnecessary verification",
     ].join("\n");
+  }
+
+  /**
+   * Google account handling instructions appended to ALL prompts.
+   * These are critical because the browser profile has synced cookies
+   * but Google may still show the account chooser screen.
+   */
+  private getGoogleAccountInstructions(): string {
+    return [
+      "",
+      "",
+      "## CRITICAL: Google Account & Login Handling (MANDATORY)",
+      "The browser has been launched with the user's synced Google cookies. You are ALREADY signed in.",
+      "",
+      "⚠️  IMPORTANT — If Google shows a 'Choose an account' page:",
+      "1. DO NOT report this as a problem or ask the user to sign in",
+      "2. CLICK the account that is displayed (the first/top account) — it is the user's synced Google profile",
+      "3. Even if it says 'Signed out' next to the account, CLICK IT — cookies will re-authenticate automatically",
+      "4. After clicking the account, wait for the redirect to complete, then proceed with the task",
+      "",
+      "For Google services (Drive, Sheets, Gmail, Calendar, Docs):",
+      "- Navigate directly to the service URL (e.g., https://drive.google.com)",
+      "- If the account chooser appears, click the account and continue",
+      "- The browser session is persistent — login state carries across navigations",
+      "",
+      "NEVER tell the user they need to sign in or that you cannot access their Google account.",
+      "The account IS connected. Just click through any chooser screens.",
+    ].join("\n");
+  }
+
+  // ── Conversation Context ────────────────────────────────────────
+
+  /**
+   * Build a prompt that includes relevant conversation history.
+   * This gives the LLM context about what happened in previous turns.
+   */
+  private buildContextualPrompt(currentPrompt: string): string {
+    // If no history yet (first message), just return the prompt
+    if (this.conversationHistory.length <= 1) {
+      return currentPrompt;
+    }
+
+    // Include recent history (skip the current message which is already the last entry)
+    const recentHistory = this.conversationHistory.slice(-10, -1);
+    if (recentHistory.length === 0) return currentPrompt;
+
+    const historyText = recentHistory
+      .map((entry) => {
+        const role = entry.role === "user" ? "User" : "You";
+        // Truncate long messages to save tokens
+        const content = entry.content.length > 200
+          ? entry.content.slice(0, 197) + "..."
+          : entry.content;
+        return `${role}: ${content}`;
+      })
+      .join("\n");
+
+    return [
+      "[Previous conversation for context]",
+      historyText,
+      "",
+      "[Current request]",
+      currentPrompt,
+    ].join("\n");
+  }
+
+  /**
+   * Build a completion message that includes what the agent did + "What's next?"
+   */
+  private buildCompletionMessage(agentReply: string, durationMs: number): string {
+    const durationSec = Math.round(durationMs / 1000);
+    const timeStr = durationSec >= 60
+      ? `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`
+      : `${durationSec}s`;
+
+    // Clean up the agent reply — remove any existing "what's next" phrasing the LLM may have added
+    const cleanReply = agentReply
+      .replace(/what would you like (me )?to do next\??/gi, "")
+      .replace(/what('s| is) next\??/gi, "")
+      .replace(/\n\n+/g, "\n\n")
+      .trim();
+
+    return `${cleanReply}\n\n⏱️ Completed in ${timeStr} · What would you like me to do next?`;
+  }
+
+  // ── Idle Screenshot Streaming ───────────────────────────────────
+
+  /**
+   * Low-frequency screenshot streaming between tasks.
+   * Keeps the browser panel alive so the user can see the current page.
+   */
+  startIdleScreenshotStreaming(): void {
+    if (!this.browser || this.isRunning) return;
+
+    // Stop any existing interval first
+    this.stopScreenshotStreaming();
+
+    // Low frequency — just enough to keep the panel alive
+    this.screenshotInterval = setInterval(() => {
+      void this.captureAndSendScreenshot();
+    }, 3000);
+
+    if (this.screenshotInterval.unref) {
+      this.screenshotInterval.unref();
+    }
   }
 
   // ── Screenshot Streaming ────────────────────────────────────────

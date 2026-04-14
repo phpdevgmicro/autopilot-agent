@@ -54,7 +54,7 @@ export function ChatInput({ onSend, onStop, disabled, isAgentRunning }: ChatInpu
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           onInput={handleInput}
-          placeholder="Type a message..."
+          placeholder={disabled ? "Waiting for agent connection…" : "Type a task for the agent…"}
           rows={1}
           disabled={disabled}
         />

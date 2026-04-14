@@ -1,22 +1,98 @@
 document.addEventListener('DOMContentLoaded', async () => {
   const serverInput = document.getElementById('serverUrl');
+  const emailInput = document.getElementById('profileEmail');
   const syncBtn = document.getElementById('syncBtn');
   const statusMsg = document.getElementById('statusMsg');
 
-  // Load saved URL from storage
-  const result = await chrome.storage.local.get(['serverUrl']);
-  if (result.serverUrl) {
-    serverInput.value = result.serverUrl;
+  // Load saved settings from storage
+  const saved = await chrome.storage.local.get(['serverUrl', 'lastEmail']);
+  if (saved.serverUrl) {
+    serverInput.value = saved.serverUrl;
   }
 
+  // ── Auto-detect email using multiple strategies ──
+  let detectedEmail = '';
+
+  // Strategy 1: chrome.identity API
+  try {
+    const userInfo = await new Promise((resolve) => {
+      if (chrome.identity && chrome.identity.getProfileUserInfo) {
+        chrome.identity.getProfileUserInfo({ accountStatus: "ANY" }, resolve);
+      } else {
+        resolve({});
+      }
+    });
+    if (userInfo.email) {
+      detectedEmail = userInfo.email;
+    }
+  } catch (e) {
+    console.log('[ext] identity detection failed:', e);
+  }
+
+  // Strategy 2: Read GMAIL_AT or SAPISID cookies to confirm login, use saved email
+  if (!detectedEmail) {
+    try {
+      const cookies = await chrome.cookies.getAll({ domain: ".google.com" });
+      // Look for cookies that indicate active Google session
+      const sessionCookies = cookies.filter(c =>
+        ['SAPISID', '__Secure-3PAPISID', 'SID', 'HSID', 'SSID', 'APISID'].includes(c.name)
+      );
+      if (sessionCookies.length > 0 && saved.lastEmail) {
+        detectedEmail = saved.lastEmail;
+      }
+    } catch (e) {
+      console.log('[ext] cookie heuristic failed:', e);
+    }
+  }
+
+  // Strategy 3: Try to extract email from Google accounts cookies page title
+  if (!detectedEmail) {
+    try {
+      // Try to get email from active tabs showing Google pages
+      const tabs = await chrome.tabs.query({ url: "https://*.google.com/*", active: true });
+      if (tabs.length > 0) {
+        // The page title might contain the email
+        const tab = tabs[0];
+        if (tab.title && tab.title.includes('@')) {
+          const match = tab.title.match(/[\w.-]+@[\w.-]+/);
+          if (match) {
+            detectedEmail = match[0];
+          }
+        }
+      }
+    } catch (e) {
+      console.log('[ext] tab title detection failed:', e);
+    }
+  }
+
+  // Set the email input value
+  if (detectedEmail) {
+    emailInput.value = detectedEmail;
+  } else if (saved.lastEmail) {
+    emailInput.value = saved.lastEmail;
+  }
+
+  // ── Sync button handler ──
   syncBtn.addEventListener('click', async () => {
     const urlStr = serverInput.value.trim();
-    if (!urlStr) return;
+    const email = emailInput.value.trim();
+    
+    if (!urlStr) {
+      statusMsg.textContent = 'Please enter the Agent Server URL';
+      statusMsg.className = 'status error';
+      return;
+    }
+    
+    if (!email) {
+      statusMsg.textContent = 'Please enter your Google email address';
+      statusMsg.className = 'status error';
+      emailInput.focus();
+      return;
+    }
 
-    // Save URL for next time
-    chrome.storage.local.set({ serverUrl: urlStr });
+    // Save settings
+    chrome.storage.local.set({ serverUrl: urlStr, lastEmail: email });
 
-    // Format URL (remove trailing slash)
     const baseUrl = urlStr.replace(/\/$/, "");
 
     // UI loading state
@@ -26,17 +102,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     statusMsg.textContent = '';
 
     try {
-      // 1. Grab all cookies for Google domains (including subdomains)
-      const [mainCookies, accountsCookies, myaccountCookies] = await Promise.all([
+      // 1. Grab all cookies for Google domains + YouTube
+      const [mainCookies, accountsCookies, myaccountCookies, youtubeCookies] = await Promise.all([
         chrome.cookies.getAll({ domain: ".google.com" }),
         chrome.cookies.getAll({ domain: "accounts.google.com" }),
         chrome.cookies.getAll({ domain: "myaccount.google.com" }),
+        chrome.cookies.getAll({ domain: ".youtube.com" }),
       ]);
       
       // Deduplicate by name+domain+path
       const seen = new Set();
       const cookies = [];
-      for (const c of [...mainCookies, ...accountsCookies, ...myaccountCookies]) {
+      for (const c of [...mainCookies, ...accountsCookies, ...myaccountCookies, ...youtubeCookies]) {
         const key = `${c.name}|${c.domain}|${c.path}`;
         if (!seen.has(key)) {
           seen.add(key);
@@ -48,22 +125,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         throw new Error("No Google cookies found. Please log in to Google first.");
       }
 
-      // 2. Prepare payload exactly as the server expects
-      const userInfo = await new Promise((resolve) => {
-        if (chrome.identity && chrome.identity.getProfileUserInfo) {
-          chrome.identity.getProfileUserInfo({ accountStatus: "ANY" }, resolve);
-        } else {
-          resolve({});
-        }
-      });
-      
-      let email = userInfo.email;
-      if (!email) {
-        email = prompt("Could not auto-detect your Chrome profile email.\n\nPlease enter an email or name for this account connection:");
-        if (!email) {
-          throw new Error("Profile name is required to connect your account.");
-        }
-      }
+      // 2. Prepare payload — profileName = email
       const payload = {
         profileName: email,
         cookies: cookies.map(c => ({
@@ -98,7 +160,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       // Success
-      statusMsg.textContent = `Success! Synced as ${email}.`;
+      statusMsg.textContent = `Success! Synced ${cookies.length} cookies as "${email}".`;
       statusMsg.className = 'status success';
       
     } catch (err) {

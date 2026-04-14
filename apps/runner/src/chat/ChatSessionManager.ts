@@ -70,6 +70,11 @@ export class ChatSession {
 
   detach(): void {
     this.sink = null;
+    // Clean up the browser when the WebSocket disconnects
+    if (this._runner) {
+      this._runner.cleanup().catch(() => { /* best-effort */ });
+      this._runner = null;
+    }
   }
 
   isConnected(): boolean {
@@ -91,10 +96,20 @@ export class ChatSession {
     // Send thinking indicator
     this.emitThinking("Launching browser agent...");
 
-    // Lazy-import to avoid circular deps and keep startup fast
-    const { ChatAgentRunner } = await import("./ChatAgentRunner.ts");
+    // Create a task for tracking
+    const taskId = randomUUID();
+    this.emit({
+      type: "task_status",
+      taskId,
+      status: "running",
+      description: content.length > 80 ? content.slice(0, 77) + "..." : content,
+      timestamp: Date.now(),
+    });
 
-    // Create runner for this session if not already active
+    // Lazy-import to avoid circular deps and keep startup fast
+    const { ChatAgentRunner } = await import("./ChatAgentRunner.js");
+
+    // Reuse runner for multi-turn conversations (keeps browser alive)
     if (!this._runner) {
       this._runner = new ChatAgentRunner(this);
     }
@@ -109,6 +124,9 @@ export class ChatSession {
         role: "agent",
         content: result.finalMessage,
         timestamp: Date.now(),
+        metadata: {
+          taskId,
+        },
       };
       this.messages.push(agentMsg);
 
@@ -117,6 +135,23 @@ export class ChatSession {
         content: agentMsg.content,
         id: agentMsg.id,
         timestamp: agentMsg.timestamp,
+      });
+
+      // Mark task as completed
+      this.emit({
+        type: "task_status",
+        taskId,
+        status: "completed",
+        description: `Completed in ${Math.round(result.durationMs / 1000)}s`,
+        timestamp: Date.now(),
+      });
+    } else {
+      // Task failed
+      this.emit({
+        type: "task_status",
+        taskId,
+        status: "failed",
+        timestamp: Date.now(),
       });
     }
   }

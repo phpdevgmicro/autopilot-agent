@@ -3489,6 +3489,50 @@ code,
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ── Message Timestamps ──────────────────────────────────────────── */
+.chatMessageTime {
+  margin-top: 4px;
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+  text-align: right;
+  transition: opacity 200ms ease;
+}
+
+.chatMessage:hover .chatMessageTime {
+  opacity: 1;
+}
+
+.chatMessageUser .chatMessageTime {
+  text-align: left;
+}
+
+/* ── Completion Message (What's next?) ───────────────────────────── */
+.chatCompletionBody {
+  white-space: pre-wrap;
+}
+
+.chatCompletionFooter {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.chatCompletionMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--accent);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.chatMessageContent {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* ── Approval Gate ───────────────────────────────────────────────── */
 .chatApprovalGate {
   background: rgba(245, 158, 11, 0.08);
@@ -3805,6 +3849,388 @@ code,
   animation: messageSlideIn 200ms ease-out;
 }
 
+/* ── Chat Input ──────────────────────────────────────────────────── */
+.chatInputContainer {
+  flex-shrink: 0;
+  padding: 12px 16px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(17, 17, 17, 0.7);
+  backdrop-filter: blur(12px);
+}
+
+.chatInputWrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 8px 8px 8px 14px;
+  transition: border-color 200ms ease, box-shadow 200ms ease;
+}
+
+.chatInputWrapper:focus-within {
+  border-color: rgba(59, 130, 246, 0.4);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.08);
+}
+
+.chatInputField {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: inherit;
+  line-height: 1.5;
+  resize: none;
+  min-height: 22px;
+  max-height: 160px;
+  padding: 2px 0;
+}
+
+.chatInputField::placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.chatInputField:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chatInputField:disabled::placeholder {
+  color: var(--text-muted);
+  opacity: 0.3;
+}
+
+.chatInputActions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.chatSendBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 150ms ease;
+  flex-shrink: 0;
+}
+
+.chatSendBtn:hover:not(:disabled) {
+  background: #4f8ff7;
+  transform: scale(1.05);
+}
+
+.chatSendBtn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.chatSendBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.chatStopBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 150ms ease;
+  flex-shrink: 0;
+}
+
+.chatStopBtn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+  transform: scale(1.05);
+}
+
+.chatStopBtn:active {
+  transform: scale(0.95);
+}
+
+/* ── Approval Gate ───────────────────────────────────────────────── */
+.chatApprovalGate {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  margin: 8px 16px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.06);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  animation: messageSlideIn 200ms ease-out;
+}
+
+.chatApprovalMessage {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.chatApprovalActions {
+  display: flex;
+  gap: 8px;
+}
+
+.chatApprovalBtn {
+  padding: 6px 16px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms ease;
+  border: 1px solid transparent;
+}
+
+.chatApprovalApprove {
+  background: rgba(74, 222, 128, 0.1);
+  border-color: rgba(74, 222, 128, 0.3);
+  color: #4ade80;
+}
+
+.chatApprovalApprove:hover {
+  background: rgba(74, 222, 128, 0.2);
+}
+
+.chatApprovalReject {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.chatApprovalReject:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* ── Agent Avatar in Header ──────────────────────────────────────── */
+.chatPanelAgentAvatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(139, 92, 246, 0.15));
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #60a5fa;
+  flex-shrink: 0;
+}
+
+.chatPanelBusyIndicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent);
+  padding: 4px 12px;
+  border-radius: 20px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.15);
+  animation: busyPulse 2s ease-in-out infinite;
+}
+
+.chatBusyDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes busyPulse {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+
+.chatStatusDotConnecting {
+  background: #f59e0b;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+/* ── Welcome State ───────────────────────────────────────────────── */
+.chatWelcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 32px 24px;
+  text-align: center;
+  min-height: 100%;
+}
+
+.chatWelcomeHero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.chatWelcomeIconWrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+}
+
+.chatWelcomeGlow {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
+  filter: blur(12px);
+  animation: welcomeGlow 3s ease-in-out infinite;
+}
+
+@keyframes welcomeGlow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 0.8; transform: scale(1.1); }
+}
+
+.chatWelcomeIcon {
+  color: #60a5fa;
+  z-index: 1;
+  animation: browserIconFloat 4s ease-in-out infinite;
+}
+
+.chatWelcomeTitle {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.chatWelcomeSubtitle {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  max-width: 300px;
+  line-height: 1.55;
+}
+
+/* ── Quick Actions ───────────────────────────────────────────────── */
+.chatQuickActions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 340px;
+}
+
+.chatQuickLabel {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.chatQuickGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.chatQuickBtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 200ms ease;
+  text-align: left;
+}
+
+.chatQuickBtn:hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.2);
+  color: var(--text);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.chatQuickBtn:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.chatQuickBtnIcon {
+  font-size: 1rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.chatQuickBtnLabel {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Capabilities ────────────────────────────────────────────────── */
+.chatCapabilities {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.chatCapability {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.chatCapIcon {
+  font-size: 0.8rem;
+  line-height: 1;
+}
+
+/* ── Connection Warning ──────────────────────────────────────────── */
+.chatConnectionWarning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.06);
+  border: 1px solid rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
+  font-size: 0.75rem;
+  font-weight: 500;
+  animation: messageSlideIn 300ms ease-out;
+}
+
 /* ── Responsive ──────────────────────────────────────────────────── */
 @media (max-width: 900px) {
   .chatAgentSplitPane {
@@ -3815,5 +4241,14 @@ code,
   .chatPanel {
     border-right: none;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .chatQuickGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .chatCapabilities {
+    flex-direction: column;
+    align-items: center;
   }
 }

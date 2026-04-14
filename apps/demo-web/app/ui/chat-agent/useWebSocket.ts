@@ -30,6 +30,7 @@ interface UseWebSocketReturn {
   messages: ChatMessage[];
   browserState: BrowserState;
   pendingApproval: ApprovalRequest | null;
+  isAgentBusy: boolean;
   sendMessage: (content: string) => void;
   respondToApproval: (requestId: string, action: "approve" | "reject") => void;
   toggleTakeover: () => void;
@@ -52,6 +53,7 @@ export function useWebSocket(): UseWebSocketReturn {
     isTakeoverActive: false,
   });
   const [pendingApproval, setPendingApproval] = useState<ApprovalRequest | null>(null);
+  const [isAgentBusy, setIsAgentBusy] = useState(false);
 
   // ── Connect ───────────────────────────────────────────────────────
   const connect = useCallback(() => {
@@ -114,8 +116,9 @@ export function useWebSocket(): UseWebSocketReturn {
         break;
 
       case "agent_message":
+        // Clear thinking messages and add the agent's response
         setMessages((prev) => [
-          ...prev,
+          ...prev.filter((m) => m.role !== "thinking"),
           {
             id: msg.id as string,
             role: "agent",
@@ -123,6 +126,8 @@ export function useWebSocket(): UseWebSocketReturn {
             timestamp: msg.timestamp as number,
           },
         ]);
+        // Agent has responded — no longer busy
+        setIsAgentBusy(false);
         break;
 
       case "agent_thinking":
@@ -178,7 +183,7 @@ export function useWebSocket(): UseWebSocketReturn {
 
       case "error":
         setMessages((prev) => [
-          ...prev,
+          ...prev.filter((m) => m.role !== "thinking"),
           {
             id: `error-${Date.now()}`,
             role: "system",
@@ -186,7 +191,18 @@ export function useWebSocket(): UseWebSocketReturn {
             timestamp: msg.timestamp as number,
           },
         ]);
+        setIsAgentBusy(false);
         break;
+
+      case "task_status": {
+        const taskStatus = msg.status as string;
+        if (taskStatus === "running") {
+          setIsAgentBusy(true);
+        } else if (taskStatus === "completed" || taskStatus === "failed" || taskStatus === "killed") {
+          setIsAgentBusy(false);
+        }
+        break;
+      }
     }
   }, []);
 
@@ -260,6 +276,7 @@ export function useWebSocket(): UseWebSocketReturn {
     messages,
     browserState,
     pendingApproval,
+    isAgentBusy,
     sendMessage,
     respondToApproval,
     toggleTakeover,
