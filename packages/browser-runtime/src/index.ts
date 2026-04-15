@@ -1,7 +1,9 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync, unlinkSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 import path from "node:path";
-import { homedir } from "node:os";
+import { homedir, platform } from "node:os";
 import { pathToFileURL } from "node:url";
 
 import { loadCredentials, upsertCredential } from "./credential-vault.js";
@@ -89,6 +91,72 @@ export function resolveBrowserStartTarget(
   };
 }
 
+/**
+ * Clean stale Chrome lock files and kill orphaned processes for a profile dir.
+ * Chrome enforces single-instance per --user-data-dir. If a previous session
+ * crashed or wasn't cleanly closed, lock files remain and block future launches
+ * with exit code 21. This function cleans those locks proactively.
+ */
+function cleanProfileLocks(profileDir: string): void {
+  const lockFiles = ["SingletonLock", "SingletonCookie", "SingletonSocket"];
+  for (const lockFile of lockFiles) {
+    const lockPath = join(profileDir, lockFile);
+    try {
+      if (existsSync(lockPath)) {
+        unlinkSync(lockPath);
+        console.log(`[browser-runtime] 🧹 Removed stale lock: ${lockFile}`);
+      }
+    } catch {
+      // Lock file may be held by OS — ignore, launch will handle it
+    }
+  }
+
+  // Kill any orphaned Chrome processes using this specific profile directory
+  try {
+    const isWindows = platform() === "win32";
+    if (isWindows) {
+      // PowerShell approach: find Chrome PIDs with matching --user-data-dir
+      // (WMIC is deprecated on Windows 11+)
+      const profileDirNormalized = profileDir.replace(/\//g, "\\");
+      const psCmd = `powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \\"name='chrome.exe'\\" | Select-Object ProcessId,CommandLine | ForEach-Object { $_.ProcessId.ToString() + '|' + $_.CommandLine }"`;
+      const result = execSync(psCmd, { encoding: "utf-8", timeout: 10000 });
+      const lines = result.split("\n").filter(l => l.includes(profileDirNormalized));
+      for (const line of lines) {
+        const pid = line.trim().split("|")[0]?.trim();
+        if (pid && /^\d+$/.test(pid)) {
+          try {
+            execSync(`taskkill /PID ${pid} /F`, { timeout: 3000 });
+            console.log(`[browser-runtime] 🧹 Killed orphaned chrome PID ${pid}`);
+          } catch {
+            // Process may already be gone
+          }
+        }
+      }
+    } else {
+      // macOS/Linux: use pgrep + grep
+      try {
+        const result = execSync(
+          `pgrep -f "${profileDir}" || true`,
+          { encoding: "utf-8", timeout: 5000 }
+        );
+        const pids = result.trim().split("\n").filter(p => /^\d+$/.test(p.trim()));
+        for (const pid of pids) {
+          try {
+            execSync(`kill -9 ${pid.trim()}`, { timeout: 3000 });
+            console.log(`[browser-runtime] 🧹 Killed orphaned chrome PID ${pid.trim()}`);
+          } catch {
+            // Process may already be gone
+          }
+        }
+      } catch {
+        // pgrep not available or no matches
+      }
+    }
+  } catch {
+    // Non-critical — launch will fail with a clear error if profile is still locked
+  }
+}
+
 export async function launchBrowserSession(
   options: LaunchBrowserSessionOptions,
 ): Promise<BrowserSession> {
@@ -174,8 +242,8 @@ export async function launchBrowserSession(
   ];
 
   let browser: Browser | null = null;
-  let context: BrowserContext;
-  let page: Page;
+  let context!: BrowserContext;
+  let page!: Page;
 
   if (usePersistentProfile) {
     // Persistent context — keeps cookies, login, profile data across runs
@@ -248,17 +316,46 @@ export async function launchBrowserSession(
       // Non-critical — agent works without prefs, just won't auto-save via Google
     }
 
-    context = await chromium.launchPersistentContext(profileDir, {
-      args: persistentArgs,
-      headless: options.browserMode === "headless",
-      viewport,
-      locale,
-      userAgent,
-      ignoreDefaultArgs: ["--enable-automation"],
-      acceptDownloads: true,
-      permissions: ["clipboard-read", "clipboard-write"],
-      ...(browserChannel ? { channel: browserChannel } : {}),
-    });
+    // ── Launch with auto-recovery from profile lock (exit code 21) ────
+    // Chrome enforces single-instance per --user-data-dir. If a previous
+    // session crashed, lock files persist and block the launch. We clean
+    // those proactively and retry if the first attempt fails.
+    const MAX_LAUNCH_ATTEMPTS = 3;
+    let lastLaunchError: unknown;
+
+    for (let attempt = 1; attempt <= MAX_LAUNCH_ATTEMPTS; attempt++) {
+      // Clean stale locks before each attempt
+      cleanProfileLocks(profileDir);
+
+      try {
+        context = await chromium.launchPersistentContext(profileDir, {
+          args: persistentArgs,
+          headless: options.browserMode === "headless",
+          viewport,
+          locale,
+          userAgent,
+          ignoreDefaultArgs: ["--enable-automation"],
+          acceptDownloads: true,
+          permissions: ["clipboard-read", "clipboard-write"],
+          ...(browserChannel ? { channel: browserChannel } : {}),
+        });
+        lastLaunchError = null;
+        break; // Success
+      } catch (err) {
+        lastLaunchError = err;
+        const errMsg = String(err);
+        const isProfileLocked = errMsg.includes("exitCode=21") || errMsg.includes("Target page, context or browser has been closed");
+
+        if (isProfileLocked && attempt < MAX_LAUNCH_ATTEMPTS) {
+          console.log(`[browser-runtime] ⚠️ Profile locked (attempt ${attempt}/${MAX_LAUNCH_ATTEMPTS}), cleaning and retrying in 2s...`);
+          await new Promise(r => setTimeout(r, 2000));
+        } else {
+          throw err;
+        }
+      }
+    }
+    if (lastLaunchError) throw lastLaunchError;
+
     page = context.pages()[0] ?? await context.newPage();
   } else {
     // Ephemeral context — clean Chromium each time (original behavior)

@@ -44,8 +44,9 @@ export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfile
       // Auto-select the first profile with cookies, or default
       if (!selectedProfile && profileList.length > 0) {
         const withCookies = profileList.find(p => p.hasCookies && p.name !== "default");
-        const fallback = profileList.find(p => p.name === "default") || profileList[0];
-        onProfileChange?.((withCookies || fallback).name);
+        const fallback = profileList.find(p => p.name === "default") ?? profileList[0];
+        const best = withCookies ?? fallback;
+        if (best) onProfileChange?.(best.name);
       }
 
       // Determine connected state based on whether selected profile has cookies
