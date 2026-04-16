@@ -1,0 +1,46 @@
+# Goal: Building the Native Virtual Browser Remote Login UI
+
+The objective is to expose a UI that allows a user to "VNC" directly into the Autopilot Agent's headless Playwright browser running on the Cloud VM. By manually logging in once through this interface, Google generates native, device-bound, encrypted credentials directly on the VM's hardware. This acts as a 100% perfect browser profile clone that is immune to Google's anti-bot measures and cookie-sync limitations.
+
+> [!NOTE]
+> The backend endpoints for this functionality already exist in `apps/runner/src/server.ts`. This implementation plan focuses purely on building the missing Frontend interface to consume them. 
+
+## Proposed Changes
+
+### apps/demo-web
+
+We will introduce a new "Remote Login Viewer" component to the frontend application that continuously fetches screenshots from the VM and translates user inputs into browser commands.
+
+#### [NEW] `apps/demo-web/src/components/RemoteLoginViewer.tsx`
+This will be the core interactive component.
+- **Image Polling**: Runs a `setInterval` or recursive `requestAnimationFrame` loop to fetch `GET /api/browser/login-screenshot` every ~300ms.
+- **Click Handling**: Listens for `onClick` events on the image. It will calculate the relative `(x, y)` coordinates based on the image's original dimensions vs its rendered display size, and transmit them via `POST /api/browser/login-click`.
+- **Keyboard Handling**: Captures a global or focused `onKeyDown` listener. Maps special keys (Enter, Backspace, Tab, Arrows) to `POST /api/browser/login-keypress`, and groups textual characters to `POST /api/browser/login-type`.
+
+#### [MODIFY] `apps/demo-web/src/app/page.tsx` (or primary dashboard layout)
+- Add a button: "Launch Remote Setup / Sync Profile".
+- Clicking this triggers `POST /api/browser/login-start` with the desired profile name and standard Google login URL.
+- Mounts the `RemoteLoginViewer.tsx` component in a modal or dedicated pane.
+- Add a "Close Session & Save Profile" button that calls `POST /api/browser/login-close`, fully saving the SQLite profile back to the disk.
+
+## Security & Reliability Considerations
+
+> [!IMPORTANT]
+> Because you are interacting with a Headless Chromium/Chrome instance natively, ensure that your `.env` contains `CUA_BROWSER_CHANNEL="chrome"` for the best stealth masking.
+
+> [!TIP]
+> Since clicking relies on `x, y` mapping, ensure the UI does not stretch or distort the aspect ratio of the 1280x800 raw image returned by the server, otherwise clicks will miss their targets.
+
+## Open Questions
+
+1. **Frontend Repository**: Does your frontend currently reside in `apps/demo-web` or is this going into your connected `landing-app`/`admin-panel` application (e.g. `insocialWISE/landing-app`)? 
+2. **Authentication**: Do the `/api/browser/login-*` endpoints currently require any JWT validation, or does the runner handle auth via standard CORS? 
+
+## Verification Plan
+
+### Manual Verification
+1. Launch the new UI in the frontend. 
+2. Click "Launch Remote Setup". Verify the modal appears and the Google Login screen renders visually on your machine.
+3. Type an email, click the "Next" button in the image feed, and verify the password screen renders.
+4. Finalize login, verify 2FA succeeds, and click "Close Session". 
+5. Run the actual Agent Prompt directly against Google Drive to confirm the session persists organically without throwing "Choose an Account."
