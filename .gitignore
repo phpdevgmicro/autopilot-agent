@@ -9,4 +9,3 @@ coverage/
 data/
 *.tsbuildinfo
 .agent/
-src

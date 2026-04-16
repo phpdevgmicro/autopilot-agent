@@ -23,6 +23,7 @@ import {
 } from "@cua-sample/runner-core";
 import { listScenarios } from "@cua-sample/scenario-kit";
 import { registerWebSocket } from "./ws/WebSocketServer.js";
+import { listChromeProfiles, cloneChromeProfile, isChromeRunning } from "./clone-profile.js";
 
 type CreateServerOptions = {
   dataRoot?: string;
@@ -441,6 +442,73 @@ export async function createServer(options: CreateServerOptions = {}) {
     }
   });
 
+  // ── Chrome Profile Clone ─────────────────────────────────────
+  // List Chrome profiles installed on this machine
+  app.get("/api/browser/chrome-profiles", async () => {
+    try {
+      const profiles = await listChromeProfiles();
+      const chromeRunning = isChromeRunning();
+      return {
+        profiles,
+        chromeRunning,
+        warning: chromeRunning
+          ? "Chrome is currently running. Close Chrome completely before cloning a profile."
+          : null,
+      };
+    } catch (err) {
+      return {
+        profiles: [],
+        chromeRunning: false,
+        error: `Failed to detect Chrome profiles: ${err}`,
+      };
+    }
+  });
+
+  // Clone a Chrome profile to the agent's working directory
+  app.post("/api/browser/clone-chrome-profile", async (request, reply) => {
+    const { profileDirectory, profileName } = request.body as {
+      profileDirectory: string;
+      profileName?: string;
+    };
+
+    if (!profileDirectory) {
+      reply.code(400);
+      return { error: "profileDirectory is required (e.g., 'Default', 'Profile 1')" };
+    }
+
+    // Check if Chrome is running
+    if (isChromeRunning()) {
+      reply.code(409);
+      return {
+        error: "Chrome is currently running",
+        hint: "Close Chrome completely before cloning a profile. Chrome locks its database files (Cookies, Login Data) while running.",
+      };
+    }
+
+    try {
+      const result = await cloneChromeProfile(
+        profileDirectory,
+        profileName,
+        baseProfileDir,
+      );
+
+      if (!result.success) {
+        reply.code(500);
+        return { error: result.error, ...result };
+      }
+
+      console.log(`[clone-profile] ✅ Cloned "${profileDirectory}" → "${result.profileName}" (${result.filesCopied} files, ${Math.round(result.sizeBytes / 1024 / 1024)}MB)`);
+      return {
+        status: "cloned",
+        message: `Successfully cloned Chrome profile "${profileDirectory}" as "${result.profileName}".`,
+        ...result,
+      };
+    } catch (err) {
+      reply.code(500);
+      return { error: `Clone failed: ${err}` };
+    }
+  });
+
   // ── Remote Login Flow ─────────────────────────────────────
   // For VM/server deployments: users log into Google DIRECTLY in the
   // agent's browser profile. This is the only reliable method because
@@ -462,7 +530,9 @@ export async function createServer(options: CreateServerOptions = {}) {
     const loginChannel = process.env.CUA_BROWSER_CHANNEL || undefined;
 
     try {
-      await mkdir(pDir, { recursive: true });
+      const { mkdir: mkdirAsync } = await import("node:fs/promises");
+      const { chromium } = await import("playwright");
+      await mkdirAsync(pDir, { recursive: true });
 
       // Launch with the EXACT same config as the agent — same channel, same
       // password-store, same profile directory. This ensures cookies saved

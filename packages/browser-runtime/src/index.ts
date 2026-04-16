@@ -7,10 +7,16 @@ import { homedir, platform } from "node:os";
 import { pathToFileURL } from "node:url";
 
 import { loadCredentials, upsertCredential } from "./credential-vault.js";
+import { launchRealChrome, listChromeProfiles, detectSystemChrome, type RealChromeSession } from "./real-chrome.js";
+import { saveStorageState, loadStorageStatePath, getStorageStateInfo, exportStorageStateContent, importStorageState } from "./storage-state.js";
 
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
 import { type BrowserMode, type BrowserViewport, type StartTarget } from "@cua-sample/replay-schema";
+
+// Re-export submodules for external access
+export { detectSystemChrome, listChromeProfiles, launchRealChrome } from "./real-chrome.js";
+export { saveStorageState, loadStorageStatePath, getStorageStateInfo, exportStorageStateContent, importStorageState } from "./storage-state.js";
 
 export const defaultViewport: BrowserViewport = {
   height: Number(process.env.CUA_VIEWPORT_HEIGHT ?? "900"),
@@ -173,6 +179,116 @@ export async function launchBrowserSession(
   
   console.log(`[browser-runtime] 🔑 browserProfile option: "${options.browserProfile || "(none)"}"`);
   console.log(`[browser-runtime] 📂 Resolved profile dir: ${profileDir}`);
+
+  // ══════════════════════════════════════════════════════════════════
+  // TIER 1: REAL CHROME — Connect to the user's actual Chrome browser
+  // via CDP. Uses their real Google profile (cookies, passwords,
+  // extensions, fingerprint). No cookie injection needed.
+  // ══════════════════════════════════════════════════════════════════
+  const useRealChrome = process.env.CUA_USE_REAL_CHROME === "true";
+
+  if (useRealChrome) {
+    try {
+      console.log(`[browser-runtime] 🚀 Tier 1: Attempting Real Chrome CDP connection...`);
+      const realSession: RealChromeSession = await launchRealChrome({
+        profileDirectory: options.browserProfile || process.env.CUA_CHROME_PROFILE || "Default",
+        viewport,
+        headless: options.browserMode === "headless",
+        debugPort: Number(process.env.CUA_CHROME_DEBUG_PORT ?? "9222"),
+      });
+
+      const { browser: realBrowser, context: realContext, page: realPage, chromeProcess } = realSession;
+
+      // Apply stealth init scripts even on real Chrome (for consistency)
+      // Note: Real Chrome is much less likely to be flagged, but these don't hurt
+      await realContext.addInitScript(`
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      `);
+
+      // Download directory
+      const downloadDir = join(options.workspacePath, "downloads");
+      await mkdir(downloadDir, { recursive: true });
+
+      // Navigate to target
+      await realPage.goto(resolvedTarget.url, { waitUntil: "load" });
+
+      let screenshotCount = 0;
+
+      console.log(`[browser-runtime] ✅ Tier 1 SUCCESS — Real Chrome with Google profile active`);
+
+      return {
+        browser: realBrowser,
+        async captureScreenshot(label) {
+          screenshotCount += 1;
+          await mkdir(options.screenshotDir, { recursive: true });
+          const screenshotPath = join(
+            options.screenshotDir,
+            `${String(screenshotCount).padStart(3, "0")}-${sanitizeLabel(label)}.png`,
+          );
+          let lastScreenshotError: unknown;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              await realPage.screenshot({ path: screenshotPath });
+              lastScreenshotError = null;
+              break;
+            } catch (err) {
+              lastScreenshotError = err;
+              if (attempt < 3) await new Promise((r) => setTimeout(r, 500 * attempt));
+            }
+          }
+          if (lastScreenshotError) throw lastScreenshotError;
+
+          let pageTitle = "";
+          try { pageTitle = await realPage.title(); } catch {}
+
+          return {
+            capturedAt: now().toISOString(),
+            currentUrl: realPage.url(),
+            id: `screenshot-${screenshotCount}`,
+            label,
+            mimeType: "image/png" as const,
+            path: screenshotPath,
+            ...(pageTitle ? { pageTitle } : {}),
+          };
+        },
+        async close() {
+          // Save storage state before closing for Tier 2 portability
+          try {
+            await saveStorageState(realContext, profileDir);
+            console.log(`[browser-runtime] 💾 Storage state exported for Tier 2 portability`);
+          } catch (err) {
+            console.warn(`[browser-runtime] ⚠️ Could not save storage state:`, err);
+          }
+          await realContext.close().catch(() => {});
+          await realBrowser.close().catch(() => {});
+          // Do NOT kill the Chrome process — let the user keep their browser running
+          // Only kill if WE spawned it
+          if (chromeProcess) {
+            try {
+              chromeProcess.kill();
+              console.log(`[browser-runtime] 🛑 Real Chrome process terminated`);
+            } catch {}
+          }
+        },
+        context: realContext,
+        mode: options.browserMode,
+        page: realPage,
+        async readState() {
+          let pageTitle = "";
+          try { pageTitle = await realPage.title(); } catch {}
+          return {
+            currentUrl: realPage.url(),
+            ...(pageTitle ? { pageTitle } : {}),
+          };
+        },
+        targetLabel: resolvedTarget.targetLabel,
+        viewport,
+      };
+    } catch (err) {
+      console.warn(`[browser-runtime] ⚠️ Tier 1 (Real Chrome) failed: ${err}`);
+      console.log(`[browser-runtime] ↓ Falling back to Tier 2/3 (Playwright Chromium)...`);
+    }
+  }
   
   const usePersistentProfile = process.env.CUA_BROWSER_PERSIST !== "false";
   const locale = process.env.CUA_BROWSER_LOCALE ?? "en-US";
@@ -879,6 +995,12 @@ export async function launchBrowserSession(
       };
     },
     async close() {
+      // Save storage state before closing for session portability
+      try {
+        await saveStorageState(context, profileDir);
+      } catch (err) {
+        console.warn(`[browser-runtime] ⚠️ Could not save storage state on close:`, err);
+      }
       await context.close();
       if (browser) {
         await browser.close();

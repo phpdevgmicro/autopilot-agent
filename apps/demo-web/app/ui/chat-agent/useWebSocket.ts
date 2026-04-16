@@ -69,6 +69,16 @@ export function useWebSocket(): UseWebSocketReturn {
         console.log("[ws] Connected");
         setStatus("connected");
         reconnectAttemptRef.current = 0;
+
+        // Sync selected profile to server on connect/reconnect
+        // This prevents stale default profile usage after page refresh
+        const savedProfile = typeof window !== "undefined"
+          ? localStorage.getItem("cua_selected_profile")
+          : null;
+        if (savedProfile && savedProfile !== "default") {
+          ws.send(JSON.stringify({ type: "switch_profile", profileName: savedProfile }));
+          console.log(`[ws] Synced profile on connect: "${savedProfile}"`);
+        }
       };
 
       ws.onmessage = (event) => {

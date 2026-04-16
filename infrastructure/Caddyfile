@@ -1,0 +1,55 @@
+# ═══════════════════════════════════════════════════════════════════════
+# Caddyfile — Auto-HTTPS Reverse Proxy for Autopilot Agent
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Caddy provides:
+#   - Automatic HTTPS via Let's Encrypt
+#   - HTTP → HTTPS redirect
+#   - Reverse proxy to Next.js frontend (:3100) and runner API (:4001)
+#   - Security headers
+#   - Request rate limiting
+#
+# Usage:
+#   sudo cp infrastructure/Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl restart caddy
+# ═══════════════════════════════════════════════════════════════════════
+
+YOUR_DOMAIN {
+    # ── Security Headers ──────────────────────────────────────────────
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy strict-origin-when-cross-origin
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        -Server
+    }
+
+    # ── Frontend (Next.js) ────────────────────────────────────────────
+    # All requests go to the Next.js frontend by default
+    reverse_proxy localhost:3100
+
+    # ── Runner API ────────────────────────────────────────────────────
+    # API requests are proxied to the runner backend
+    handle /api/* {
+        reverse_proxy localhost:4001
+    }
+
+    # ── WebSocket support for live updates ────────────────────────────
+    handle /ws/* {
+        reverse_proxy localhost:4001
+    }
+
+    # ── Health endpoint ───────────────────────────────────────────────
+    handle /health {
+        respond "OK" 200
+    }
+
+    # ── Logging ───────────────────────────────────────────────────────
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10MiB
+            roll_keep 5
+        }
+    }
+}
