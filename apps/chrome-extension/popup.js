@@ -129,9 +129,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         "cloud.google.com",
       ];
       
-      const allResults = await Promise.all(
-        googleDomains.map(d => chrome.cookies.getAll({ domain: d }))
-      );
+      const allResults = await Promise.all([
+        ...googleDomains.map(d => chrome.cookies.getAll({ domain: d })),
+        chrome.cookies.getAll({ url: "https://myaccount.google.com" }),
+        chrome.cookies.getAll({ url: "https://accounts.google.com" }),
+        chrome.cookies.getAll({ url: "https://google.com" }),
+        chrome.cookies.getAll({ url: "https://drive.google.com" })
+      ]);
       
       // Deduplicate by name+domain+path
       const seen = new Set();

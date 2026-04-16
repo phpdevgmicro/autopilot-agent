@@ -11,8 +11,8 @@ export {
   buildFreestyleNativeInstructions,
 } from "./freestyle-plan.js";
 export type { RunExecutionContext } from "./scenario-runtime.js";
-export { ToolRegistry, type ToolDefinition, type ToolParameter } from "./tool-registry.js";
 export { LoopDetector, type LoopState } from "./loop-detector.js";
+
 
 // Re-export browser-runtime types so consumers don't need a direct dep
 export { launchBrowserSession, type BrowserSession } from "@cua-sample/browser-runtime";
