@@ -181,9 +181,20 @@ export async function launchBrowserSession(
   const downloadDir = join(options.workspacePath, "downloads");
   await mkdir(downloadDir, { recursive: true });
 
-  // Realistic user-agent — use a RECENT Chrome version (Cloudflare flags old versions)
-  const userAgent =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+  // Read imported-cookies.json to get the exact user payload
+  let userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36";
+  try {
+    const cookiesPath = join(profileDir, "imported-cookies.json");
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const data = require("fs").readFileSync(cookiesPath, "utf-8");
+    const parsed = JSON.parse(data);
+    if (parsed.userAgent) {
+      userAgent = parsed.userAgent;
+      console.log(`[browser-runtime] 👤 Using imported User-Agent: ${userAgent}`);
+    }
+  } catch {
+    // Leave default
+  }
 
   // Browser channel: use CUA_BROWSER_CHANNEL="chrome" for native Chrome (better anti-bot, but cookies are NOT portable across OS).
   // Leave unset to use Playwright's bundled Chromium (cross-platform portable cookies).

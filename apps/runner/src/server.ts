@@ -337,7 +337,7 @@ export async function createServer(options: CreateServerOptions = {}) {
       return { error: "Browser persistence is disabled" };
     }
 
-    const { cookies, source, profileName } = request.body as {
+    const { cookies, source, profileName, userAgent } = request.body as {
       cookies: Array<{
         name: string;
         value: string;
@@ -350,6 +350,7 @@ export async function createServer(options: CreateServerOptions = {}) {
       }>;
       localStorage?: Record<string, string>;
       source?: string;
+      userAgent?: string;
       profileName?: string;
     };
 
@@ -366,10 +367,21 @@ export async function createServer(options: CreateServerOptions = {}) {
     try {
       await mkdir(pDir, { recursive: true });
 
+      // ── CRITICAL: Clean lock files before launch ──
+      // If a previous session crashed, lock files persist and block the launch (exit code 21).
+      const locks = ["SingletonLock", "SingletonCookie", "SingletonSocket"];
+      for (const lock of locks) {
+        try {
+          const lPath = require("path").join(pDir, lock);
+          await require("node:fs/promises").unlink(lPath);
+        } catch { /* ignore if not present */ }
+      }
+
       // ── CRITICAL: Use the SAME Chrome binary as the agent ──────────
       // Each Chrome installation generates a unique `os_crypt` encryption
       // key in `Local State`. If we use Playwright Chromium here but the
       // agent uses native Chrome (channel: "chrome"), the keys differ and
+      // cookies become unreadable across engines.
       // cookies become unreadable across engines.
       const importChannel = process.env.CUA_BROWSER_CHANNEL || undefined;
 
@@ -408,7 +420,7 @@ export async function createServer(options: CreateServerOptions = {}) {
 
       // Also save cookies as a backup JSON file
       const backupPath = join(pDir, "imported-cookies.json");
-      await writeFile(backupPath, JSON.stringify({ cookies, source, importedAt: new Date().toISOString() }, null, 2));
+      await writeFile(backupPath, JSON.stringify({ cookies, source, userAgent, importedAt: new Date().toISOString() }, null, 2));
 
       const imported = cookies.length;
       const googleCookies = cookies.filter(c => c.domain.includes("google")).length;

