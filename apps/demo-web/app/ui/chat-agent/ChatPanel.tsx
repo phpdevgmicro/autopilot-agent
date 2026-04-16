@@ -13,6 +13,7 @@ interface ChatPanelProps {
   onSendMessage: (content: string) => void;
   onApprovalResponse: (requestId: string, action: "approve" | "reject") => void;
   onStop: () => void;
+  isFullWidth?: boolean;
 }
 
 const QUICK_ACTIONS = [
@@ -30,6 +31,7 @@ export function ChatPanel({
   onSendMessage,
   onApprovalResponse,
   onStop,
+  isFullWidth = false,
 }: ChatPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isConnected = connectionStatus === "connected";
@@ -42,44 +44,7 @@ export function ChatPanel({
   }, [messages]);
 
   return (
-    <div className="chatPanel" id="chat-panel">
-      {/* Header */}
-      <div className="chatPanelHeader">
-        <div className="chatPanelHeaderLeft">
-          <div className="chatPanelAgentAvatar">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 8V4H8" />
-              <rect width="16" height="12" x="4" y="8" rx="2" />
-              <path d="M2 14h2" />
-              <path d="M20 14h2" />
-              <path d="M15 13v2" />
-              <path d="M9 13v2" />
-            </svg>
-          </div>
-          <div className="chatPanelTitle">
-            <h2>Agent</h2>
-            <div className="chatPanelStatus">
-              <span
-                className={`chatStatusDot ${isConnected ? "chatStatusDotOnline" : connectionStatus === "connecting" ? "chatStatusDotConnecting" : "chatStatusDotOffline"}`}
-              />
-              <span className="chatStatusText">
-                {connectionStatus === "connecting"
-                  ? "Connecting…"
-                  : isConnected
-                    ? "Online"
-                    : "Reconnecting…"}
-              </span>
-            </div>
-          </div>
-        </div>
-        {isAgentBusy && (
-          <div className="chatPanelBusyIndicator">
-            <span className="chatBusyDot" />
-            <span>Working…</span>
-          </div>
-        )}
-      </div>
-
+    <div className={`chatPanel ${isFullWidth ? "chatPanelFullWidth" : ""}`} id="chat-panel">
       {/* Messages */}
       <div className="chatMessages" ref={scrollRef} id="chat-messages">
         {messages.length === 0 && (
@@ -88,7 +53,7 @@ export function ChatPanel({
             <div className="chatWelcomeHero">
               <div className="chatWelcomeIconWrap">
                 <div className="chatWelcomeGlow" />
-                <svg className="chatWelcomeIcon" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg className="chatWelcomeIcon" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 8V4H8" />
                   <rect width="16" height="12" x="4" y="8" rx="2" />
                   <path d="M2 14h2" />
@@ -98,18 +63,18 @@ export function ChatPanel({
                 </svg>
               </div>
               <h3 className="chatWelcomeTitle">
-                {isConnected ? "Ready to help!" : "Connecting to agent…"}
+                {isConnected ? "What can I help you with?" : "Connecting to agent…"}
               </h3>
               <p className="chatWelcomeSubtitle">
-                Tell me what to do — I&apos;ll navigate websites, fill forms, click buttons, and complete tasks in the browser.
+                I can navigate websites, fill forms, click buttons, and complete tasks in a real browser — just tell me what to do.
               </p>
             </div>
 
             {/* Quick Actions */}
             {isConnected && (
               <div className="chatQuickActions">
-                <span className="chatQuickLabel">Quick start</span>
-                <div className="chatQuickGrid">
+                <span className="chatQuickLabel">Try one of these</span>
+                <div className={`chatQuickGrid ${isFullWidth ? "chatQuickGridWide" : ""}`}>
                   {QUICK_ACTIONS.map((action) => (
                     <button
                       key={action.label}
@@ -124,22 +89,6 @@ export function ChatPanel({
                 </div>
               </div>
             )}
-
-            {/* Capabilities */}
-            <div className="chatCapabilities">
-              <div className="chatCapability">
-                <span className="chatCapIcon">🌐</span>
-                <span>Navigate any website</span>
-              </div>
-              <div className="chatCapability">
-                <span className="chatCapIcon">🔐</span>
-                <span>Uses your synced Google profile</span>
-              </div>
-              <div className="chatCapability">
-                <span className="chatCapIcon">⚡</span>
-                <span>Executes tasks autonomously</span>
-              </div>
-            </div>
 
             {/* Connection Warning */}
             {!isConnected && (
@@ -163,22 +112,35 @@ export function ChatPanel({
         {/* Approval gate */}
         {pendingApproval && (
           <div className="chatApprovalGate" id="approval-gate">
-            <div className="chatApprovalMessage">{pendingApproval.message}</div>
-            <div className="chatApprovalActions">
-              <button
-                className="chatApprovalBtn chatApprovalApprove"
-                onClick={() => onApprovalResponse(pendingApproval.requestId, "approve")}
-                type="button"
-              >
-                ✓ Approve
-              </button>
-              <button
-                className="chatApprovalBtn chatApprovalReject"
-                onClick={() => onApprovalResponse(pendingApproval.requestId, "reject")}
-                type="button"
-              >
-                ✕ Reject
-              </button>
+            <div className="chatApprovalIcon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+            </div>
+            <div className="chatApprovalBody">
+              <div className="chatApprovalMessage">{pendingApproval.message}</div>
+              <div className="chatApprovalActions">
+                <button
+                  className="chatApprovalBtn chatApprovalApprove"
+                  onClick={() => onApprovalResponse(pendingApproval.requestId, "approve")}
+                  type="button"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  Approve
+                </button>
+                <button
+                  className="chatApprovalBtn chatApprovalReject"
+                  onClick={() => onApprovalResponse(pendingApproval.requestId, "reject")}
+                  type="button"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                  Reject
+                </button>
+              </div>
             </div>
           </div>
         )}

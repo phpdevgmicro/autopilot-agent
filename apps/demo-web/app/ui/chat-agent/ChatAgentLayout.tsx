@@ -20,6 +20,7 @@ export function ChatAgentLayout() {
     pendingApproval,
     isAgentBusy,
     sendMessage,
+    sendRaw,
     respondToApproval,
     toggleTakeover,
     stopTask,
@@ -37,6 +38,10 @@ export function ChatAgentLayout() {
     localStorage.setItem("cua_selected_profile", p);
   };
 
+  // Show browser panel when there's an active screenshot
+  const hasBrowserContent = browserState.screenshot !== null;
+  const isConnected = status === "connected";
+
   return (
     <div className="chatAgentShell">
       {/* Top bar */}
@@ -53,17 +58,38 @@ export function ChatAgentLayout() {
             <h1>{APP_NAME}</h1>
           </div>
         </div>
-        <ConnectProfileButton
-          runnerBaseUrl={RUNNER_BASE_URL}
-          selectedProfile={selectedProfile}
-          onProfileChange={handleProfileChange}
-        />
+
+        <div className="chatAgentTopbarRight">
+          {/* Connection status pill */}
+          <div className={`chatAgentStatusPill ${isConnected ? "chatAgentStatusOnline" : ""}`}>
+            <span className={`chatAgentStatusDot ${isConnected ? "chatAgentStatusDotOn" : status === "connecting" ? "chatAgentStatusDotConnecting" : "chatAgentStatusDotOff"}`} />
+            <span>
+              {status === "connecting" ? "Connecting" : isConnected ? "Online" : "Reconnecting"}
+            </span>
+          </div>
+
+          {/* Busy indicator */}
+          {isAgentBusy && (
+            <div className="chatAgentBusyPill">
+              <span className="chatAgentBusyDot" />
+              <span>Working…</span>
+            </div>
+          )}
+
+          <ConnectProfileButton
+            runnerBaseUrl={RUNNER_BASE_URL}
+            selectedProfile={selectedProfile}
+            onProfileChange={handleProfileChange}
+            isAgentBusy={isAgentBusy}
+            sendWsMessage={sendRaw}
+          />
+        </div>
       </header>
 
-      {/* Split pane */}
+      {/* Main content area */}
       <main className="chatAgentMain">
-        <div className="chatAgentSplitPane">
-          {/* Left: Chat */}
+        <div className={`chatAgentSplitPane ${hasBrowserContent ? "chatAgentSplitPaneActive" : "chatAgentSplitPaneChatOnly"}`}>
+          {/* Chat */}
           <ChatPanel
             messages={messages}
             pendingApproval={pendingApproval}
@@ -72,14 +98,17 @@ export function ChatAgentLayout() {
             onSendMessage={sendMessage}
             onApprovalResponse={respondToApproval}
             onStop={() => stopTask()}
+            isFullWidth={!hasBrowserContent}
           />
 
-          {/* Right: Browser */}
-          <BrowserViewport
-            browserState={browserState}
-            isTakeoverActive={browserState.isTakeoverActive}
-            onToggleTakeover={toggleTakeover}
-          />
+          {/* Browser - only show when there's content */}
+          {hasBrowserContent && (
+            <BrowserViewport
+              browserState={browserState}
+              isTakeoverActive={browserState.isTakeoverActive}
+              onToggleTakeover={toggleTakeover}
+            />
+          )}
         </div>
       </main>
     </div>

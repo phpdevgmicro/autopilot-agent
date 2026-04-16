@@ -8,12 +8,10 @@ import { getPrompt, isPromptStoreSynced } from "./prompt-store.js";
  *
  * @throws If prompts haven't been synced from the Google Sheet
  */
-export async function buildFreestyleCodeInstructions(currentUrl: string): Promise<string> {
+export async function buildFreestyleCodeInstructions(currentUrl: string): Promise<string | null> {
   if (!isPromptStoreSynced()) {
-    throw new Error(
-      "[freestyle-plan] Prompt sync required. The agent cannot start without prompts from the Google Sheet. " +
-      "Ensure CUA_PROMPTS_WEBHOOK_URL is set and the n8n 'Agent Prompt Sync' workflow is active."
-    );
+    console.log(`[freestyle-plan] ℹ️ Prompt store not synced — using built-in instructions`);
+    return null;
   }
 
   // Auto-inject all available context variables.
@@ -24,7 +22,7 @@ export async function buildFreestyleCodeInstructions(currentUrl: string): Promis
     appName: process.env.NEXT_PUBLIC_APP_NAME ?? "Agent",
     browserMode: process.env.CUA_BROWSER_MODE ?? "headless",
     executionMode: process.env.CUA_EXECUTION_MODE ?? "code",
-    model: process.env.CUA_DEFAULT_MODEL ?? "gpt-5.4",
+    model: process.env.CUA_DEFAULT_MODEL!,
     maxTurns: `dynamic (ceiling: ${process.env.CUA_MAX_RESPONSE_TURNS ?? "100"})`,
     timestamp: new Date().toISOString(),
   };
@@ -64,6 +62,6 @@ export async function buildFreestyleCodeInstructions(currentUrl: string): Promis
  * Uses the SAME prompt as code mode from the Google Sheet.
  * This ensures consistent agent behavior across both execution modes.
  */
-export async function buildFreestyleNativeInstructions(currentUrl: string): Promise<string> {
+export async function buildFreestyleNativeInstructions(currentUrl: string): Promise<string | null> {
   return buildFreestyleCodeInstructions(currentUrl);
 }

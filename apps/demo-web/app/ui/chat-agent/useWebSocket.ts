@@ -32,6 +32,7 @@ interface UseWebSocketReturn {
   pendingApproval: ApprovalRequest | null;
   isAgentBusy: boolean;
   sendMessage: (content: string) => void;
+  sendRaw: (data: object) => void;
   respondToApproval: (requestId: string, action: "approve" | "reject") => void;
   toggleTakeover: () => void;
   stopTask: (taskId?: string) => void;
@@ -278,6 +279,7 @@ export function useWebSocket(): UseWebSocketReturn {
     pendingApproval,
     isAgentBusy,
     sendMessage,
+    sendRaw: send,
     respondToApproval,
     toggleTakeover,
     stopTask,

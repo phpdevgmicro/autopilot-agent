@@ -16,6 +16,7 @@
     "identity.email"
   ],
   "host_permissions": [
+    "https://google.com/*",
     "https://*.google.com/*",
     "https://*.youtube.com/*"
   ]

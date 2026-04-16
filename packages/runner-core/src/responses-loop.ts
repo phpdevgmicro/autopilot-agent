@@ -118,11 +118,40 @@ type ResponsesLoopResult = {
 
 const defaultInterActionDelayMs = Number(process.env.CUA_INTER_ACTION_DELAY_MS ?? "120");
 const toolExecutionTimeoutMs = Number(process.env.CUA_TOOL_TIMEOUT_MS ?? "20000");
-const defaultReasoningEffort = (process.env.CUA_REASONING_EFFORT ?? "low") as "low" | "medium" | "high";
+
+// ── Content Boundary & Output Limiting (inspired by agent-browser) ──
+const MAX_TOOL_OUTPUT_CHARS = Number(process.env.CUA_MAX_TOOL_OUTPUT ?? "12000");
+const CONTENT_BOUNDARY = "---TOOL_OUTPUT---";
+
+/**
+ * Wrap tool output with content boundaries to prevent prompt injection
+ * and truncate to prevent context window flooding.
+ */
+function boundToolOutput(output: ToolOutput[]): ToolOutput[] {
+  return output.map((item) => {
+    if (item.type !== "input_text") return item;
+    let text = item.text;
+    // Truncate if too long
+    if (text.length > MAX_TOOL_OUTPUT_CHARS) {
+      text = text.slice(0, MAX_TOOL_OUTPUT_CHARS) + `\n... (truncated — ${text.length} total chars, showing first ${MAX_TOOL_OUTPUT_CHARS})`;
+    }
+    // Wrap with content boundaries
+    text = `${CONTENT_BOUNDARY}\n${text}\n${CONTENT_BOUNDARY}`;
+    return { text, type: "input_text" as const };
+  });
+}
+const defaultReasoningEffort = (process.env.CUA_REASONING_EFFORT ?? "medium") as "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 const webhookUrl = process.env.CUA_WEBHOOK_URL?.trim() || null;
 
-/** Models that support the `reasoning` parameter (o-series reasoning models). */
-const REASONING_MODEL_PREFIXES = ["o1", "o3", "o4"];
+// ── Reasoning Startup Validation ────────────────────────────────────
+if (defaultReasoningEffort === "none") {
+  console.warn("[responses-loop] ⚠️ CUA_REASONING_EFFORT is set to 'none' — the agent will NOT use deep thinking. This significantly reduces intelligence.");
+} else {
+  console.log(`[responses-loop] 🧠 Reasoning effort: ${defaultReasoningEffort}`);
+}
+
+/** Models that support the `reasoning` parameter (gpt-5 and o-series models only — per OpenAI docs). */
+const REASONING_MODEL_PREFIXES = ["o1", "o3", "o4", "gpt-5"];
 
 function supportsReasoning(model: string): boolean {
   const m = model.toLowerCase();
@@ -277,26 +306,32 @@ async function generateAiWalkthrough(
 
   const appName = process.env.NEXT_PUBLIC_APP_NAME ?? "Agent";
 
-  // Google Sheet is the single source of truth — no hardcoded fallbacks
-  if (!isPromptStoreSynced()) {
-    console.warn(`  ⚠️  ${appName} — Prompt store not synced, skipping summary generation`);
-    return null;
+  // Try Google Sheet prompt first, fall back to built-in prompt
+  let summaryPrompt: string | null = null;
+  if (isPromptStoreSynced()) {
+    summaryPrompt = getPrompt("walkthrough_summary_prompt", {
+      appName,
+      taskPrompt,
+      logText,
+      agentConclusion,
+      turnsUsed: String(turnsUsed),
+      maxTurns: String(maxTurns),
+      totalInputTokens: String(totalInputTokens),
+      totalOutputTokens: String(totalOutputTokens),
+    });
   }
 
-  const summaryPrompt = getPrompt("walkthrough_summary_prompt", {
-    appName,
-    taskPrompt,
-    logText,
-    agentConclusion,
-    turnsUsed: String(turnsUsed),
-    maxTurns: String(maxTurns),
-    totalInputTokens: String(totalInputTokens),
-    totalOutputTokens: String(totalOutputTokens),
-  });
-
   if (!summaryPrompt) {
-    console.warn(`  ⚠️  ${appName} — Missing 'walkthrough_summary_prompt' in Sheet, skipping summary`);
-    return null;
+    // Fallback: use a built-in summary prompt when Sheet is unavailable
+    summaryPrompt = [
+      `You are ${appName}'s task summarizer. Write a concise walkthrough of what was accomplished.`,
+      "",
+      "Rules:",
+      "- Start with a 1-line executive summary of the outcome",
+      "- List key findings or actions as bullet points",
+      "- Keep it under 200 words",
+      "- Use plain language, no markdown headers",
+    ].join("\n");
   }
 
   // Auto-append task context so the summary model always has the data,
@@ -689,8 +724,13 @@ function buildCodeToolDefinitions() {
     {
       type: "function",
       name: "exec_js",
-      description:
-        "Execute provided interactive JavaScript in a persistent Playwright REPL context.",
+      description: [
+        "Execute JavaScript in a persistent Playwright REPL.",
+        "Use for: inspecting the DOM, finding elements, reading page content, filling forms, and complex interactions.",
+        "Available globals: console.log, display(base64Image), Buffer, browser, context, page.",
+        "Use console.log() to read values back. Use display(base64) for screenshots/images.",
+        "RECOMMENDED for page inspection: page.evaluate(() => { ... }) to query the DOM.",
+      ].join("\n"),
       strict: true,
       parameters: {
         additionalProperties: false,
@@ -712,6 +752,8 @@ function buildCodeToolDefinitions() {
         type: "object",
       },
     },
+    // Element-based tools complement exec_js for quick interactions
+    ...buildAgentToolDefinitions(),
   ];
 }
 
@@ -871,6 +913,58 @@ function buildAgentToolDefinitions() {
           },
         },
         required: ["index", "value"],
+        type: "object",
+      },
+    },
+    // ── Navigation Tool ──────────────────────────────────────────────
+    {
+      type: "function",
+      name: "navigate_to",
+      description: [
+        "Navigate the browser to a URL. Use this instead of writing page.goto() in exec_js.",
+        "Waits for the page to load before returning. Returns the new page title and URL.",
+        "For Google services use direct URLs: drive.google.com, mail.google.com, docs.google.com, calendar.google.com",
+      ].join("\n"),
+      strict: true,
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          url: {
+            description: "The URL to navigate to (e.g., https://drive.google.com)",
+            type: "string",
+          },
+        },
+        required: ["url"],
+        type: "object",
+      },
+    },
+    // ── Scroll Tool ──────────────────────────────────────────────────
+    {
+      type: "function",
+      name: "scroll_page",
+      description: [
+        "Scroll the page or a specific element up or down.",
+        "Use to reveal hidden content, scroll within dropdowns/panels/popups, or reach elements below the fold.",
+        "After scrolling, call get_elements to see newly visible elements.",
+      ].join("\n"),
+      strict: true,
+      parameters: {
+        additionalProperties: false,
+        properties: {
+          direction: {
+            description: "Scroll direction: 'down' or 'up'",
+            type: "string",
+          },
+          amount: {
+            description: "Pixels to scroll (default 400). Use smaller values (150-200) for panels/dropdowns.",
+            type: "number",
+          },
+          selector: {
+            description: "Optional CSS selector of a scrollable container (e.g., a dropdown panel). If omitted, scrolls the whole page.",
+            type: "string",
+          },
+        },
+        required: ["direction", "amount", "selector"],
         type: "object",
       },
     },
@@ -1134,6 +1228,76 @@ function executeAgentNotepad(
   }
 }
 
+// ── Navigate Tool Handler ──────────────────────────────────────────
+
+async function executeNavigateTo(
+  input: ResponsesLoopContext,
+  url: string,
+): Promise<ToolOutput[]> {
+  try {
+    // Normalize URL (add https:// if missing)
+    const normalizedUrl = url.startsWith("http") ? url : `https://${url}`;
+
+    await input.session.page.goto(normalizedUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+    await input.session.page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+
+    const finalUrl = input.session.page.url();
+    const title = await input.session.page.title().catch(() => "");
+
+    // Auto-handle Google Account Chooser
+    if (finalUrl.includes("accounts.google.com/signin/accountchooser") ||
+        finalUrl.includes("accounts.google.com/AccountChooser")) {
+      await input.context.emitEvent({
+        detail: "Auto-clicking first Google account on Account Chooser",
+        level: "ok",
+        message: "🔐 Google Account Chooser detected — auto-selecting account...",
+        type: "run_progress",
+      });
+
+      try {
+        // Click the first account entry
+        const clicked = await input.session.page.evaluate(`
+          (() => {
+            const accountItems = document.querySelectorAll('[data-identifier], [data-email], .JDAKTe');
+            if (accountItems.length > 0) {
+              accountItems[0].click();
+              return true;
+            }
+            // Fallback: find any div/li that looks like an account entry
+            const listItems = document.querySelectorAll('ul li[role="link"], div[role="link"]');
+            if (listItems.length > 0) {
+              listItems[0].click();
+              return true;
+            }
+            return false;
+          })()
+        `) as boolean;
+
+        if (clicked) {
+          await input.session.page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+          await input.session.page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+          const newUrl = input.session.page.url();
+          const newTitle = await input.session.page.title().catch(() => "");
+
+          await input.context.syncBrowserState(input.session);
+          await input.context.captureScreenshot(input.session, `navigate-auto-login-${Date.now()}`);
+
+          return [{ text: `Navigated to ${normalizedUrl}. Google Account Chooser appeared — auto-selected account. Now on: ${newTitle} (${newUrl})`, type: "input_text" }];
+        }
+      } catch {
+        // Account chooser handling failed — return current state
+      }
+    }
+
+    await input.context.syncBrowserState(input.session);
+    await input.context.captureScreenshot(input.session, `navigate-${Date.now()}`);
+
+    return [{ text: `Navigated to: ${title} (${finalUrl})`, type: "input_text" }];
+  } catch (err) {
+    return [{ text: `Navigation failed: ${err instanceof Error ? err.message : String(err)}`, type: "input_text" }];
+  }
+}
+
 async function executeFunctionToolCall(
   input: ResponsesLoopContext,
   functionCall: FunctionCallItem,
@@ -1188,7 +1352,7 @@ async function executeFunctionToolCall(
       const snapshotRef = options.elementSnapshot ?? { current: null };
       const snapshot = await extractInteractiveElements(input.session.page);
       snapshotRef.current = snapshot;
-      const formatted = formatSnapshotForLLM(snapshot);
+      const formatted = formatSnapshotForLLM(snapshot, { maxElements: 60, compact: false });
       output = [{ text: formatted, type: "input_text" }];
       break;
     }
@@ -1201,14 +1365,22 @@ async function executeFunctionToolCall(
         snapshotRef.current = await extractInteractiveElements(input.session.page);
       }
       const clickResult = await clickElementByIndex(input.session.page, snapshotRef.current, args.index);
-      output = [{ text: clickResult.message, type: "input_text" }];
       if (clickResult.success) {
         // Invalidate snapshot after click (page may have changed)
         snapshotRef.current = null;
         // Wait for page to settle
         await input.session.page.waitForLoadState("domcontentloaded", { timeout: 3000 }).catch(() => {});
+        await new Promise(r => setTimeout(r, 500)); // extra settle time for popups/panels
         await input.context.syncBrowserState(input.session);
         await input.context.captureScreenshot(input.session, `click-element-${args.index}-${Date.now()}`);
+
+        // AUTO-CAPTURE: Show agent what changed after click
+        const newSnapshot = await extractInteractiveElements(input.session.page);
+        snapshotRef.current = newSnapshot;
+        const newElements = formatSnapshotForLLM(newSnapshot, { maxElements: 30, compact: true, actionableOnly: true });
+        output = [{ text: `${clickResult.message}\n\n📋 Page after click:\n${newElements}`, type: "input_text" }];
+      } else {
+        output = [{ text: clickResult.message, type: "input_text" }];
       }
       break;
     }
@@ -1245,6 +1417,54 @@ async function executeFunctionToolCall(
       break;
     }
 
+    // ── Navigate Tool ────────────────────────────────────────────────
+    case "navigate_to": {
+      const args = JSON.parse(functionCall.arguments ?? "{}") as { url: string };
+      output = await executeNavigateTo(input, args.url);
+      break;
+    }
+
+    // ── Scroll Tool ────────────────────────────────────────────────
+    case "scroll_page": {
+      const args = JSON.parse(functionCall.arguments ?? "{}") as { direction: string; amount: number; selector: string };
+      const scrollAmount = args.amount || 400;
+      const scrollDir = args.direction === "up" ? -scrollAmount : scrollAmount;
+
+      try {
+        if (args.selector && args.selector.trim()) {
+          // Scroll within a specific container
+          await input.session.page.evaluate(`
+            (() => {
+              const container = document.querySelector(${JSON.stringify(args.selector)});
+              if (container) {
+                container.scrollBy({ top: ${scrollDir}, behavior: 'smooth' });
+                return true;
+              }
+              // If specific container not found, scroll the page
+              window.scrollBy({ top: ${scrollDir}, behavior: 'smooth' });
+              return false;
+            })()
+          `);
+        } else {
+          // Scroll the whole page
+          await input.session.page.evaluate(`window.scrollBy({ top: ${scrollDir}, behavior: 'smooth' })`);
+        }
+
+        await new Promise(r => setTimeout(r, 500)); // wait for scroll animation
+        await input.context.captureScreenshot(input.session, `scroll-${args.direction}-${Date.now()}`);
+
+        // Refresh elements after scroll
+        const snapshotRef = options.elementSnapshot ?? { current: null };
+        const newSnapshot = await extractInteractiveElements(input.session.page);
+        snapshotRef.current = newSnapshot;
+        const newElements = formatSnapshotForLLM(newSnapshot, { maxElements: 40, compact: true, actionableOnly: true });
+        output = [{ text: `Scrolled ${args.direction} ${scrollAmount}px${args.selector ? ` in ${args.selector}` : ""}.\n\n📋 Elements now visible:\n${newElements}`, type: "input_text" }];
+      } catch (err) {
+        output = [{ text: `Scroll failed: ${err instanceof Error ? err.message : String(err)}`, type: "input_text" }];
+      }
+      break;
+    }
+
     default:
       throw new Error(
         `Unexpected function call: ${functionCall.name ?? "<unknown>"}.`,
@@ -1258,7 +1478,7 @@ async function executeFunctionToolCall(
     type: "function_call_completed",
   });
 
-  return output;
+  return boundToolOutput(output);
 }
 
 /** Emoji icon for each action type */
@@ -1550,10 +1770,44 @@ export async function runResponsesCodeLoop(
   let nextInput: unknown = input.prompt ?? input.context.detail.run.prompt;
   let finalAssistantMessage: string | undefined;
 
+  // Shared state for element-based tools (now available in code mode too)
+  const elementSnapshotRef: { current: DOMSnapshot | null } = { current: null };
+  const notepad = new Map<string, string>();
+
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   const activityLog: ActivityLogEntry[] = [];
   const startTime = Date.now();
+
+  // ── Auto-inject page context into the first prompt ────────────────
+  // This gives the model immediate awareness of the current page
+  try {
+    const pageUrl = input.session.page.url();
+    const pageTitle = await input.session.page.title().catch(() => "");
+    const snapshot = await extractInteractiveElements(input.session.page);
+    elementSnapshotRef.current = snapshot;
+    const elementsPreview = formatSnapshotForLLM(snapshot, { maxElements: 40, compact: true, actionableOnly: true });
+
+    // Only inject if there's meaningful content (not just a blank page)
+    if (elementsPreview && elementsPreview.length > 20) {
+      const pageContext = [
+        "",
+        "[CURRENT PAGE CONTEXT — auto-captured]",
+        `URL: ${pageUrl}`,
+        `Title: ${pageTitle}`,
+        "",
+        "Interactive elements on this page:",
+        elementsPreview.slice(0, 3000), // Cap to save tokens
+        "",
+        "[USER REQUEST]",
+      ].join("\n");
+
+      // Prepend page context to the user prompt
+      nextInput = pageContext + "\n" + String(nextInput);
+    }
+  } catch {
+    // Page context injection is best-effort — don't block the loop
+  }
 
   // ── Dynamic turn budget ──────────────────────────────────────────
   const hardCeiling = input.maxResponseTurns; // absolute max from env
@@ -1607,7 +1861,43 @@ export async function runResponsesCodeLoop(
     const functionCalls = getFunctionCallItems(response);
 
     if (functionCalls.length === 0) {
-      finalAssistantMessage = extractAssistantMessageText(response) || undefined;
+      const assistantText = extractAssistantMessageText(response) || "";
+
+      // ── Premature completion guard ──────────────────────────────────
+      // If the agent gives up too early (< MIN_TURNS) with surrender language,
+      // force it to retry instead of breaking the loop.
+      const GIVE_UP_PHRASES = [
+        "security", "verification", "cloudflare", "captcha",
+        "can't", "cannot", "unable", "blocked", "not able",
+        "could you", "please complete", "manually", "help me",
+        "i need you to", "i'll need your", "check failed",
+      ];
+      const isGivingUp = GIVE_UP_PHRASES.some(p =>
+        assistantText.toLowerCase().includes(p)
+      );
+      const MIN_TURNS_BEFORE_GIVING_UP = 4;
+
+      if (isGivingUp && turn < MIN_TURNS_BEFORE_GIVING_UP && turn < currentBudget) {
+        await input.context.emitEvent({
+          detail: `Agent tried to give up on turn ${turn}: "${assistantText.slice(0, 100)}..."`,
+          level: "warn",
+          message: `🔄 Retry: agent giving up too early (turn ${turn}/${currentBudget})`,
+          type: "run_progress",
+        });
+        nextInput = [
+          "DO NOT give up yet. You have plenty of turns remaining.",
+          "Try these recovery strategies in order:",
+          "1. Wait 5-8 seconds for security checks to auto-resolve: await page.waitForTimeout(6000);",
+          "2. Then take a fresh screenshot to check if the page changed",
+          "3. If still blocked, reload: await page.reload({ waitUntil: 'domcontentloaded' });",
+          "4. Try navigating directly to the target URL",
+          "5. Use exec_js to inspect the DOM for hidden forms or redirect URLs",
+          "Continue working on the original task. Do NOT ask the user for help yet.",
+        ].join("\n");
+        continue; // Skip the break, force another turn
+      }
+
+      finalAssistantMessage = assistantText || undefined;
       activityLog.push({
         turn,
         timestamp: new Date().toISOString(),
@@ -1635,6 +1925,8 @@ export async function runResponsesCodeLoop(
 
       const output = await executeFunctionToolCall(input, functionCall, {
         vmContext,
+        elementSnapshot: elementSnapshotRef,
+        notepad,
       });
 
       toolOutputs.push({
@@ -1823,7 +2115,44 @@ export async function runResponsesNativeComputerLoop(
     );
 
     if (!hasToolCalls) {
-      finalAssistantMessage = extractAssistantMessageText(response) || undefined;
+      const assistantText = extractAssistantMessageText(response) || "";
+
+      // ── Premature completion guard (same as code loop) ─────────────
+      const GIVE_UP_PHRASES = [
+        "security", "verification", "cloudflare", "captcha",
+        "can't", "cannot", "unable", "blocked", "not able",
+        "could you", "please complete", "manually", "help me",
+        "i need you to", "i'll need your", "check failed",
+      ];
+      const isGivingUp = GIVE_UP_PHRASES.some(p =>
+        assistantText.toLowerCase().includes(p)
+      );
+      const MIN_TURNS_BEFORE_GIVING_UP = 4;
+
+      if (isGivingUp && turn < MIN_TURNS_BEFORE_GIVING_UP && turn < currentBudget) {
+        await input.context.emitEvent({
+          detail: `Agent tried to give up on turn ${turn}: "${assistantText.slice(0, 100)}..."`,
+          level: "warn",
+          message: `🔄 Retry: agent giving up too early (turn ${turn}/${currentBudget})`,
+          type: "run_progress",
+        });
+        nextInput = [
+          { role: "user", content: [
+            { type: "input_text", text: [
+              "DO NOT give up yet. You have plenty of turns remaining.",
+              "Try these recovery strategies:",
+              "1. Wait 5-8 seconds for security checks to auto-resolve",
+              "2. Take a fresh screenshot to check if the page changed",
+              "3. If still blocked, try clicking the page or reloading",
+              "4. Try navigating directly to the target URL",
+              "Continue working on the original task. Do NOT ask the user for help yet.",
+            ].join("\n") },
+          ]},
+        ];
+        continue; // Skip the break, force another turn
+      }
+
+      finalAssistantMessage = assistantText || undefined;
       activityLog.push({
         turn,
         timestamp: new Date().toISOString(),

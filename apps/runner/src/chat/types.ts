@@ -68,7 +68,11 @@ export interface ChatSessionConfig {
 }
 
 export const DEFAULT_SESSION_CONFIG: ChatSessionConfig = {
-  model: process.env.OPENAI_MODEL ?? "gpt-4.1",
+  model: (() => {
+    const m = process.env.CUA_DEFAULT_MODEL;
+    if (!m) throw new Error("[FATAL] CUA_DEFAULT_MODEL is not set in .env — cannot start agent without a model.");
+    return m;
+  })(),
   maxConcurrentTasks: 1,
   screenshotIntervalMs: 2000,
   autoApproveNavigation: true,

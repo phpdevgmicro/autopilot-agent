@@ -156,6 +156,34 @@ async function handleClientMessage(
       break;
     }
 
+    case "switch_profile": {
+      // User switched browser profile from the dropdown
+      const profileName = msg.profileName;
+      console.log(`[ws] Profile switch requested: "${profileName}"`);
+
+      // Store the new profile on the session (persists across runner recreation)
+      session.setProfile(profileName);
+
+      // Close existing browser so next task launches with new profile
+      // IMPORTANT: We do NOT null _runner — that would destroy conversation history
+      const activeRunner = session._runner;
+      if (activeRunner) {
+        if (activeRunner.isActive()) {
+          session.addSystemMessage(`⚠️ Cannot switch profile while a task is running. Stop the task first.`);
+          break;
+        }
+        // Close only the browser (releases profile lock), keep runner alive
+        try {
+          await activeRunner.closeBrowser();
+        } catch {
+          // best-effort
+        }
+      }
+
+      session.addSystemMessage(`🔄 Switched to profile **${profileName}**. The next task will use this profile's cookies.`);
+      break;
+    }
+
     default:
       console.warn("[ws] Unknown message type:", (msg as { type: string }).type);
   }

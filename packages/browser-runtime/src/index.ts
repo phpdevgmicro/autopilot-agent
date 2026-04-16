@@ -47,6 +47,7 @@ export type BrowserSession = {
   captureScreenshot: (label: string) => Promise<BrowserScreenshot>;
   close: () => Promise<void>;
   context: BrowserContext;
+  cookieAgeHours?: number;
   mode: BrowserMode;
   page: Page;
   readState: () => Promise<BrowserSessionState>;
@@ -221,10 +222,10 @@ export async function launchBrowserSession(
   const persistentArgs = [
     ...sharedStealthArgs,
     "--disable-component-extensions-with-background-pages",
-    // NO --disable-extensions: allow Chrome's built-in password manager extension
-    // NO --password-store=basic: let Chrome use the real OS credential store
-    // NO --use-mock-keychain: let Chrome use the real keychain
-    // NO --disable-save-password-bubble: let Chrome offer to save passwords
+    // Use basic (unencrypted) cookie store so cookies are portable
+    // between Playwright Chromium (import endpoint) and native Chrome (agent launch).
+    // Without this, DPAPI encrypts cookies per-binary and they can't be shared.
+    "--password-store=basic",
     "--disable-features=IsolateOrigins,site-per-process,TranslateUI",
     // Enable sync-related features for Google password sync
     "--enable-features=PasswordImport,PasswordExport",
@@ -244,6 +245,7 @@ export async function launchBrowserSession(
   let browser: Browser | null = null;
   let context!: BrowserContext;
   let page!: Page;
+  let cookieAge = Infinity;
 
   if (usePersistentProfile) {
     // Persistent context — keeps cookies, login, profile data across runs
@@ -357,6 +359,104 @@ export async function launchBrowserSession(
     if (lastLaunchError) throw lastLaunchError;
 
     page = context.pages()[0] ?? await context.newPage();
+
+    // ── Re-inject synced cookies on every launch ──────────────────────
+    // Chromium's internal SQLite DB often loses cookies between sessions
+    // (expiry, DB clearing, profile lock recovery). Re-inject from the
+    // backup JSON so the profile always has the synced Google cookies.
+    // IMPORTANT: Use CDP Network.setCookies (not Playwright addCookies)
+    // because native Chrome channel may not honor Playwright's cookie store.
+    const cookieBackupPath = join(profileDir, "imported-cookies.json");
+    try {
+      if (existsSync(cookieBackupPath)) {
+        const raw = await readFile(cookieBackupPath, "utf-8");
+        const data = JSON.parse(raw);
+        if (Array.isArray(data.cookies) && data.cookies.length > 0) {
+          // Check cookie freshness
+          if (data.importedAt) {
+            cookieAge = (Date.now() - new Date(data.importedAt).getTime()) / (1000 * 60 * 60);
+            if (cookieAge > 6) {
+              console.warn(`[browser-runtime] ⚠️ Cookies are ${Math.round(cookieAge)}h old — Google may require re-authentication. Re-sync from the Chrome extension.`);
+            }
+          }
+
+          // Filter out already-expired cookies before injection
+          const nowSec = Date.now() / 1000;
+          const validCookies = data.cookies.filter((c: { expires?: number }) =>
+            !c.expires || c.expires <= 0 || c.expires > nowSec
+          );
+
+          // ── PRIMARY: CDP Network.setCookies ─────────────────────────
+          // This injects directly into Chrome's network stack, bypassing
+          // Playwright's abstraction that can fail with native Chrome.
+          try {
+            const cdpSession = await context.newCDPSession(page);
+            const cdpCookies = validCookies.map((c: {
+              name: string; value: string; domain: string; path?: string;
+              expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: string;
+            }) => {
+              // CDP requires 'url' for proper cookie association — without it,
+              // dot-prefixed domains like '.google.com' are silently dropped.
+              const cleanDomain = c.domain.startsWith(".") ? c.domain.slice(1) : c.domain;
+              const protocol = c.secure !== false ? "https" : "http";
+              const url = `${protocol}://${cleanDomain}${c.path || "/"}`;
+              return {
+                name: c.name,
+                value: c.value,
+                domain: c.domain,
+                path: c.path || "/",
+                url,
+                expires: c.expires && c.expires > 0 ? c.expires : undefined,
+                httpOnly: c.httpOnly ?? false,
+                secure: c.secure ?? false,
+                sameSite: c.sameSite === "None" ? "None" : c.sameSite === "Strict" ? "Strict" : "Lax",
+              };
+            });
+            await cdpSession.send("Network.setCookies", { cookies: cdpCookies });
+
+            // Verify injection via CDP
+            const verifyResult = await cdpSession.send("Network.getCookies", {
+              urls: ["https://www.google.com", "https://accounts.google.com", "https://myaccount.google.com"]
+            }).catch(() => ({ cookies: [] }));
+            const verifiedCookies = (verifyResult as { cookies: Array<{ name: string }> }).cookies;
+            const authNames = ["SID", "HSID", "SSID", "SAPISID", "__Secure-1PSID", "__Secure-3PSID", "LSID"];
+            const verifiedAuth = verifiedCookies.filter((c: { name: string }) => authNames.includes(c.name));
+            console.log(`[browser-runtime] 🔐 CDP injected ${cdpCookies.length} cookies → verified ${verifiedCookies.length} in browser (${verifiedAuth.length} auth tokens)`);
+
+            if (verifiedAuth.length === 0) {
+              console.warn(`[browser-runtime] ⚠️ NO auth cookies verified after CDP injection — Google login will likely fail`);
+            }
+
+            await cdpSession.detach().catch(() => {});
+          } catch (cdpErr) {
+            console.warn(`[browser-runtime] ⚠️ CDP injection failed, falling back to addCookies:`, cdpErr);
+          }
+
+          // ── FALLBACK: Playwright addCookies ─────────────────────────
+          const playwrightCookies = validCookies.map((c: {
+            name: string; value: string; domain: string; path?: string;
+            expires?: number; httpOnly?: boolean; secure?: boolean; sameSite?: string;
+          }) => ({
+            name: c.name,
+            value: c.value,
+            domain: c.domain,
+            path: c.path || "/",
+            expires: c.expires ?? -1,
+            httpOnly: c.httpOnly ?? false,
+            secure: c.secure ?? false,
+            sameSite: (c.sameSite as "Strict" | "Lax" | "None") ?? "Lax",
+          }));
+          await context.addCookies(playwrightCookies);
+          const googleCount = validCookies.filter((c: { domain: string }) => c.domain.includes("google")).length;
+          const expiredCount = data.cookies.length - validCookies.length;
+          console.log(`[browser-runtime] 🍪 Re-injected ${validCookies.length} cookies (${googleCount} Google)${expiredCount > 0 ? `, skipped ${expiredCount} expired` : ""} from backup`);
+        }
+      } else {
+        console.log(`[browser-runtime] ℹ️ No cookie backup found at ${cookieBackupPath} — profile may not be authenticated`);
+      }
+    } catch (err) {
+      console.warn(`[browser-runtime] ⚠️ Failed to re-inject cookies from backup:`, err);
+    }
   } else {
     // Ephemeral context — clean Chromium each time (original behavior)
     browser = await chromium.launch({
@@ -791,5 +891,6 @@ export async function launchBrowserSession(
     },
     targetLabel: resolvedTarget.targetLabel,
     viewport,
+    ...(cookieAge !== Infinity ? { cookieAgeHours: Math.round(cookieAge) } : {}),
   };
 }

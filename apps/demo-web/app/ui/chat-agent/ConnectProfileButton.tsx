@@ -15,9 +15,13 @@ type ConnectProfileProps = {
   runnerBaseUrl: string;
   selectedProfile?: string;
   onProfileChange?: (p: string) => void;
+  /** When true, disable switching (agent is working) */
+  isAgentBusy?: boolean;
+  /** Send a raw WS message so we can notify the runner */
+  sendWsMessage?: (data: object) => void;
 };
 
-export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfileChange }: ConnectProfileProps) {
+export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfileChange, isAgentBusy, sendWsMessage }: ConnectProfileProps) {
   const [status, setStatus] = useState<"loading" | "connected" | "not-connected" | "disabled">("loading");
   const [profiles, setProfiles] = useState<ProfileInfo[]>([]);
   const [action, setAction] = useState<"idle" | "switching" | "clearing">("idle");
@@ -176,8 +180,23 @@ export function ConnectProfileButton({ runnerBaseUrl, selectedProfile, onProfile
                   key={p.name}
                   className={`profileDropdownItem ${isSelected ? "active" : ""}`}
                   onClick={() => {
+                    if (isAgentBusy) {
+                      showMessage("⏳ Cannot switch profiles while agent is working. Stop the task first.");
+                      setMenuOpen(false);
+                      return;
+                    }
+                    if (isSelected) {
+                      setMenuOpen(false);
+                      return;
+                    }
+                    const prevProfile = selectedProfile;
                     onProfileChange?.(p.name);
                     setMenuOpen(false);
+                    showMessage(`✅ Switched to ${getDisplayName(p.name)}`);
+                    // Notify the runner to re-launch browser with new profile
+                    if (sendWsMessage && prevProfile !== p.name) {
+                      sendWsMessage({ type: "switch_profile", profileName: p.name });
+                    }
                   }}
                   type="button"
                   style={{

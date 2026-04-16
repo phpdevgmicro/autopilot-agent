@@ -14,7 +14,8 @@ export type ClientMessage =
   | ClientApprovalResponse
   | ClientManualTakeover
   | ClientBrowserAction
-  | ClientStopTask;
+  | ClientStopTask
+  | ClientSwitchProfile;
 
 export interface ClientUserMessage {
   type: "user_message";
@@ -43,6 +44,11 @@ export interface ClientBrowserAction {
 export interface ClientStopTask {
   type: "stop_task";
   taskId?: string;
+}
+
+export interface ClientSwitchProfile {
+  type: "switch_profile";
+  profileName: string;
 }
 
 // ── Browser Actions (during manual takeover) ────────────────────────

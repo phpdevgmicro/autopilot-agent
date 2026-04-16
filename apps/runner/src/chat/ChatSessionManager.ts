@@ -42,6 +42,8 @@ export class ChatSession {
   private config: ChatSessionConfig;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- lazy-loaded to avoid circular deps
   _runner: any = null;
+  /** Active browser profile name — persists across runner re-creation */
+  private activeProfileName: string = process.env.CUA_DEFAULT_BROWSER_PROFILE || "default";
 
   // Browser state
   private browserState: BrowserSessionState = {
@@ -81,6 +83,18 @@ export class ChatSession {
     return this.sink !== null && this.sink.isOpen();
   }
 
+  // ── Profile Management ──────────────────────────────────────────
+
+  /** Update the active browser profile (called by switch_profile WS handler) */
+  setProfile(name: string): void {
+    this.activeProfileName = name;
+  }
+
+  /** Get the currently active profile name */
+  getActiveProfile(): string {
+    return this.activeProfileName;
+  }
+
   // ── Message Handling ────────────────────────────────────────────
 
   async handleUserMessage(content: string, messageId: string, browserProfile?: string): Promise<void> {
@@ -115,7 +129,12 @@ export class ChatSession {
     }
 
     // Run the agent with the specified browser profile
-    const result = await this._runner.run(content, browserProfile);
+    // Priority: explicit WS message param → session stored profile → "default"
+    const effectiveProfile = browserProfile || this.activeProfileName;
+    if (browserProfile && browserProfile !== this.activeProfileName) {
+      this.activeProfileName = browserProfile;
+    }
+    const result = await this._runner.run(content, effectiveProfile);
 
     if (result) {
       // Send the agent's final response

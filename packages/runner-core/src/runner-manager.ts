@@ -87,7 +87,11 @@ type ReplayBundle = {
 };
 
 const defaultStepDelayMs = Number(process.env.CUA_STEP_DELAY_MS ?? "650");
-const defaultRunModel = process.env.CUA_DEFAULT_MODEL ?? "gpt-5.4";
+const defaultRunModel = (() => {
+  const m = process.env.CUA_DEFAULT_MODEL;
+  if (!m) throw new Error("[FATAL] CUA_DEFAULT_MODEL is not set in .env — cannot start runner without a model.");
+  return m;
+})();
 const defaultMaxResponseTurns = Number(process.env.CUA_MAX_RESPONSE_TURNS ?? "100");
 const defaultBrowserMode = (process.env.CUA_BROWSER_MODE ?? "headless") as "headless" | "headful";
 const defaultExecutionMode = (process.env.CUA_EXECUTION_MODE ?? "native") as "code" | "native";

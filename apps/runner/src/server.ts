@@ -366,12 +366,23 @@ export async function createServer(options: CreateServerOptions = {}) {
     try {
       await mkdir(pDir, { recursive: true });
 
-      // Launch a temporary browser context to import cookies
-      // This ensures they're stored in the proper Chromium profile format
+      // ── CRITICAL: Use the SAME Chrome binary as the agent ──────────
+      // Each Chrome installation generates a unique `os_crypt` encryption
+      // key in `Local State`. If we use Playwright Chromium here but the
+      // agent uses native Chrome (channel: "chrome"), the keys differ and
+      // cookies become unreadable across engines.
+      const importChannel = process.env.CUA_BROWSER_CHANNEL || undefined;
+
       const ctx = await chromium.launchPersistentContext(pDir, {
         headless: true,
-        args: ["--no-first-run", "--no-default-browser-check", "--disable-gpu", "--no-sandbox"],
+        args: [
+          "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--no-sandbox",
+          // MUST match agent's launch args — on Linux, this makes cookie storage
+          // plaintext instead of keychain-encrypted, ensuring the agent can read them.
+          "--password-store=basic",
+        ],
         ignoreDefaultArgs: ["--enable-automation"],
+        ...(importChannel ? { channel: importChannel } : {}),
       });
 
       // Add cookies to the browser context
@@ -386,13 +397,14 @@ export async function createServer(options: CreateServerOptions = {}) {
         sameSite: (c.sameSite as "Strict" | "Lax" | "None") ?? "Lax",
       })));
 
-      // Navigate to Google to verify cookies work
-      const page = ctx.pages()[0] ?? await ctx.newPage();
-      await page.goto("https://myaccount.google.com", { timeout: 15_000 }).catch(() => {});
-      const title = await page.title().catch(() => "unknown");
+      // ── DO NOT navigate to Google in headless mode ─────────────────
+      // Navigating to myaccount.google.com triggers Google's bot detection
+      // which invalidates the freshly-injected cookies server-side.
+      // The cookies work fine when the agent opens Google in headed mode.
 
       // Close context — cookies are now persisted in the profile directory
       await ctx.close();
+      const title = "skipped (headless verification disabled)";
 
       // Also save cookies as a backup JSON file
       const backupPath = join(pDir, "imported-cookies.json");
@@ -417,10 +429,79 @@ export async function createServer(options: CreateServerOptions = {}) {
     }
   });
 
-  // ── Embedded login interaction endpoints ───────────────
-  // Remote login context — set when user opens a login browser session
+  // ── Remote Login Flow ─────────────────────────────────────
+  // For VM/server deployments: users log into Google DIRECTLY in the
+  // agent's browser profile. This is the only reliable method because
+  // Google invalidates cookies transferred between browser sessions.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let remoteLoginCtx: any = null;
+
+  app.post("/api/browser/login-start", async (request, reply) => {
+    if (remoteLoginCtx) {
+      // Close existing session first
+      try { await remoteLoginCtx.close(); } catch { /* ignore */ }
+      remoteLoginCtx = null;
+    }
+
+    const { profile, url } = request.body as { profile?: string; url?: string };
+    const profileName = profile || process.env.CUA_DEFAULT_BROWSER_PROFILE || "default";
+    const baseDir = process.env.CUA_BROWSER_PROFILE_DIR || join(homedir(), ".autopilot-agent", "browser-profile");
+    const pDir = join(baseDir, profileName);
+    const loginChannel = process.env.CUA_BROWSER_CHANNEL || undefined;
+
+    try {
+      await mkdir(pDir, { recursive: true });
+
+      // Launch with the EXACT same config as the agent — same channel, same
+      // password-store, same profile directory. This ensures cookies saved
+      // during login are immediately usable by the agent.
+      remoteLoginCtx = await chromium.launchPersistentContext(pDir, {
+        headless: true,
+        args: [
+          "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--no-sandbox",
+          "--password-store=basic",
+          "--disable-blink-features=AutomationControlled",
+          "--disable-infobars",
+        ],
+        ignoreDefaultArgs: ["--enable-automation"],
+        viewport: { width: 1280, height: 800 },
+        ...(loginChannel ? { channel: loginChannel } : {}),
+      });
+
+      const page = remoteLoginCtx.pages()[0] ?? await remoteLoginCtx.newPage();
+      const loginUrl = url || "https://accounts.google.com/signin";
+      await page.goto(loginUrl, { timeout: 20_000 }).catch(() => {});
+
+      console.log(`[remote-login] 🔐 Login session started for profile "${profileName}" → ${loginUrl}`);
+      return { status: "started", profile: profileName, url: loginUrl };
+    } catch (err: unknown) {
+      remoteLoginCtx = null;
+      reply.code(500);
+      return { error: "Failed to start login session", hint: String(err) };
+    }
+  });
+
+  app.post("/api/browser/login-close", async (_request, reply) => {
+    if (!remoteLoginCtx) { reply.code(404); return { error: "No active login session" }; }
+
+    try {
+      // Grab current page info before closing
+      const page = remoteLoginCtx.pages()[0];
+      const title = page ? await page.title().catch(() => "unknown") : "unknown";
+      const url = page ? page.url() : "unknown";
+
+      // Close context — this flushes cookies to the profile's SQLite DB
+      await remoteLoginCtx.close();
+      remoteLoginCtx = null;
+
+      console.log(`[remote-login] ✅ Login session closed. Last page: "${title}" (${url})`);
+      return { status: "closed", pageTitle: title, lastUrl: url };
+    } catch (err: unknown) {
+      remoteLoginCtx = null;
+      reply.code(500);
+      return { error: "Failed to close login session", hint: String(err) };
+    }
+  });
 
   app.get("/api/browser/login-screenshot", async (_request, reply) => {
     if (!remoteLoginCtx) { reply.code(404); return { error: "No active login session" }; }
