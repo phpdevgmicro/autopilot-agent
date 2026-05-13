@@ -79,7 +79,7 @@ class FreestyleCodeExecutor implements RunExecutor {
       const result = await runResponsesCodeLoop(
         {
           context,
-          instructions: await buildFreestyleCodeInstructions(session.page.url()),
+          instructions: await buildFreestyleCodeInstructions(session.page.url() ?? startUrl),
           maxResponseTurns: context.detail.run.maxResponseTurns ?? 24,
           prompt: context.detail.run.prompt,
           session,
@@ -159,7 +159,7 @@ class FreestyleNativeExecutor implements RunExecutor {
       const result = await runResponsesNativeComputerLoop(
         {
           context,
-          instructions: await buildFreestyleNativeInstructions(session.page.url()),
+          instructions: await buildFreestyleNativeInstructions(session.page.url() ?? startUrl),
           maxResponseTurns: context.detail.run.maxResponseTurns ?? 24,
           prompt: context.detail.run.prompt,
           session,

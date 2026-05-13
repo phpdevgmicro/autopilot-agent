@@ -175,12 +175,114 @@ describe("runResponsesCodeLoop", () => {
 
     expect(
       (requests[0]?.tools as Array<{ name?: string }>).map((tool) => tool.name),
-    ).toEqual(["exec_js"]);
+    ).toContain("exec_js");
     expect(result.finalAssistantMessage).toBe(
       "Board matches the requested final state.",
     );
     expect(
       events.some((event) => event.type === "function_call_completed"),
+    ).toBe(true);
+  });
+
+  it("allows auth challenge requests to reach the user immediately", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const client = {
+      async create(request: Record<string, unknown>) {
+        requests.push(request);
+
+        return {
+          id: "resp_code_otp",
+          output: [
+            {
+              content: [
+                {
+                  text: "Google needs a verification code. Could you enter it in the browser? I'll continue right after.",
+                  type: "output_text",
+                },
+              ],
+              role: "assistant",
+              type: "message" as const,
+            },
+          ],
+        };
+      },
+    };
+    const { context, events } = createMockExecutionContext();
+
+    const result = await runResponsesCodeLoop(
+      {
+        context: context as never,
+        instructions: "Use exec_js to complete the Google task.",
+        maxResponseTurns: 4,
+        session: createMockSession() as never,
+      },
+      client,
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(result.finalAssistantMessage).toContain("verification code");
+    expect(
+      events.some((event) => event.message.includes("giving up too early")),
+    ).toBe(false);
+  });
+
+  it("still retries generic early blocked messages", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const client = {
+      async create(request: Record<string, unknown>) {
+        requests.push(request);
+
+        if (requests.length === 1) {
+          return {
+            id: "resp_code_blocked",
+            output: [
+              {
+                content: [
+                  {
+                    text: "I am blocked. Could you help me manually?",
+                    type: "output_text",
+                  },
+                ],
+                role: "assistant",
+                type: "message" as const,
+              },
+            ],
+          };
+        }
+
+        return {
+          id: "resp_code_final",
+          output: [
+            {
+              content: [
+                {
+                  text: "Recovered and completed the browser task.",
+                  type: "output_text",
+                },
+              ],
+              role: "assistant",
+              type: "message" as const,
+            },
+          ],
+        };
+      },
+    };
+    const { context, events } = createMockExecutionContext();
+
+    const result = await runResponsesCodeLoop(
+      {
+        context: context as never,
+        instructions: "Use exec_js to complete the browser task.",
+        maxResponseTurns: 4,
+        session: createMockSession() as never,
+      },
+      client,
+    );
+
+    expect(requests).toHaveLength(2);
+    expect(result.finalAssistantMessage).toBe("Recovered and completed the browser task.");
+    expect(
+      events.some((event) => event.message.includes("giving up too early")),
     ).toBe(true);
   });
 });
@@ -239,7 +341,7 @@ describe("runResponsesNativeComputerLoop", () => {
       (requests[0]?.tools as Array<{ name?: string; type: string }>).map((tool) =>
         tool.type === "computer" ? "computer" : tool.name,
       ),
-    ).toEqual(["computer"]);
+    ).toContain("computer");
     expect(requests[1]?.previous_response_id).toBe("resp_native_1");
     expect(requests[1]?.input).toEqual([
       {

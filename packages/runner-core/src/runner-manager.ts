@@ -92,7 +92,13 @@ const defaultRunModel = (() => {
   if (!m) throw new Error("[FATAL] CUA_DEFAULT_MODEL is not set in .env — cannot start runner without a model.");
   return m;
 })();
-const defaultMaxResponseTurns = Number(process.env.CUA_MAX_RESPONSE_TURNS ?? "100");
+function readDefaultMaxResponseTurns() {
+  const configured = Number(process.env.CUA_MAX_RESPONSE_TURNS ?? "50");
+  if (!Number.isFinite(configured)) return 50;
+  return Math.min(50, Math.max(1, Math.floor(configured)));
+}
+
+const defaultMaxResponseTurns = readDefaultMaxResponseTurns();
 const defaultBrowserMode = (process.env.CUA_BROWSER_MODE ?? "headless") as "headless" | "headful";
 const defaultExecutionMode = (process.env.CUA_EXECUTION_MODE ?? "native") as "code" | "native";
 
@@ -837,6 +843,7 @@ export class RunnerManager {
       JSON.stringify(context.detail.run, null, 2),
       "utf8",
     );
+    await mkdir(dirname(this.getRunReplayPath(runId)), { recursive: true });
     await writeFile(
       this.getRunReplayPath(runId),
       JSON.stringify(this.buildReplayBundle(context.detail), null, 2),

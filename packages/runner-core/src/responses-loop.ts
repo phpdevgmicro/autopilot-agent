@@ -203,6 +203,36 @@ function estimateInitialBudget(prompt: string, hardCeiling: number): number {
   return budget;
 }
 
+function isAuthChallengeAssistanceRequest(text: string): boolean {
+  const lower = text.toLowerCase();
+  const authChallengePhrases = [
+    "2fa",
+    "2-step",
+    "captcha",
+    "one-time",
+    "otp",
+    "passkey",
+    "password",
+    "security check",
+    "security code",
+    "security key",
+    "two-factor",
+    "verification code",
+    "verify your identity",
+  ];
+  const userAssistancePhrases = [
+    "browser",
+    "complete",
+    "could you",
+    "enter",
+    "please",
+    "type",
+  ];
+
+  return authChallengePhrases.some((phrase) => lower.includes(phrase))
+    && userAssistancePhrases.some((phrase) => lower.includes(phrase));
+}
+
 /**
  * Retry wrapper with exponential backoff for transient API errors.
  * Retries on 429 (rate limit), 500, 502, 503, and network errors.
@@ -1877,7 +1907,7 @@ export async function runResponsesCodeLoop(
       ];
       const isGivingUp = GIVE_UP_PHRASES.some(p =>
         assistantText.toLowerCase().includes(p)
-      );
+      ) && !isAuthChallengeAssistanceRequest(assistantText);
       const MIN_TURNS_BEFORE_GIVING_UP = 4;
 
       if (isGivingUp && turn < MIN_TURNS_BEFORE_GIVING_UP && turn < currentBudget) {
@@ -2129,7 +2159,7 @@ export async function runResponsesNativeComputerLoop(
       ];
       const isGivingUp = GIVE_UP_PHRASES.some(p =>
         assistantText.toLowerCase().includes(p)
-      );
+      ) && !isAuthChallengeAssistanceRequest(assistantText);
       const MIN_TURNS_BEFORE_GIVING_UP = 4;
 
       if (isGivingUp && turn < MIN_TURNS_BEFORE_GIVING_UP && turn < currentBudget) {

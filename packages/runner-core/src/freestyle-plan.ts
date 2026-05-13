@@ -8,10 +8,23 @@ import { getPrompt, isPromptStoreSynced } from "./prompt-store.js";
  *
  * @throws If prompts haven't been synced from the Google Sheet
  */
-export async function buildFreestyleCodeInstructions(currentUrl: string): Promise<string | null> {
+function buildBuiltInFreestyleInstructions(currentUrl: string): string {
+  return [
+    "You are controlling a browser to complete the user's task.",
+    "Use browser tools to inspect the page, click, type, navigate, and verify results.",
+    "For Google services, prefer direct /u/0/ URLs such as https://drive.google.com/drive/u/0/ and https://mail.google.com/mail/u/0/.",
+    "If Google shows an account chooser, select the active account and continue.",
+    "If Google asks for a password, OTP, passkey, CAPTCHA, or security check, ask the user to complete it in the browser and continue after they do.",
+    "Never ask the user to paste passwords, OTPs, passkeys, or recovery codes into chat.",
+    `Current URL: ${currentUrl}`,
+    `Timestamp: ${new Date().toISOString()}`,
+  ].join("\n");
+}
+
+export async function buildFreestyleCodeInstructions(currentUrl: string): Promise<string> {
   if (!isPromptStoreSynced()) {
     console.log(`[freestyle-plan] ℹ️ Prompt store not synced — using built-in instructions`);
-    return null;
+    return buildBuiltInFreestyleInstructions(currentUrl);
   }
 
   // Auto-inject all available context variables.
@@ -62,6 +75,6 @@ export async function buildFreestyleCodeInstructions(currentUrl: string): Promis
  * Uses the SAME prompt as code mode from the Google Sheet.
  * This ensures consistent agent behavior across both execution modes.
  */
-export async function buildFreestyleNativeInstructions(currentUrl: string): Promise<string | null> {
+export async function buildFreestyleNativeInstructions(currentUrl: string): Promise<string> {
   return buildFreestyleCodeInstructions(currentUrl);
 }
